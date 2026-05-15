@@ -85,7 +85,12 @@ fetch_and_install() {
         curl -A "$custom_user_agent" -L "$pinned_bz_version_url" --output "install_backblaze.exe" || handle_error "INSTALLER: error downloading from $pinned_bz_version_url"
     fi
     log_message "INSTALLER: Starting install_backblaze.exe"
-    WINEARCH="$WINEARCH" WINEPREFIX="$WINEPREFIX" wine "install_backblaze.exe" || handle_error "INSTALLER: Failed to install Backblaze"
+    WINEARCH="$WINEARCH" WINEPREFIX="$WINEPREFIX" wine "install_backblaze.exe"
+    install_exit=$?
+    log_message "INSTALLER: wine exited with code $install_exit"
+    if [ $install_exit -ne 0 ] && [ $install_exit -ne 3010 ]; then
+        handle_error "INSTALLER: Failed to install Backblaze (exit code: $install_exit)"
+    fi
 
 }
 
