@@ -85,13 +85,13 @@ fetch_and_install() {
         curl -A "$custom_user_agent" -L "$pinned_bz_version_url" --output "install_backblaze.exe" || handle_error "INSTALLER: error downloading from $pinned_bz_version_url"
     fi
     log_message "INSTALLER: Starting install_backblaze.exe"
-    WINEARCH="$WINEARCH" WINEPREFIX="$WINEPREFIX" wine64 "install_backblaze.exe" || handle_error "INSTALLER: Failed to install Backblaze"
+    WINEARCH="$WINEARCH" WINEPREFIX="$WINEPREFIX" wine "install_backblaze.exe" || handle_error "INSTALLER: Failed to install Backblaze"
 
 }
 
 start_app() {
     log_message "STARTAPP: Starting Backblaze version $(cat "$local_version_file")"
-    wine64 "${WINEPREFIX}drive_c/Program Files (x86)/Backblaze/bzbui.exe" -noquiet &
+    wine "${WINEPREFIX}drive_c/Program Files (x86)/Backblaze/bzbui.exe" -noquiet &
     sleep infinity
 }
 
