@@ -21,8 +21,13 @@ log_message() {
 }
 
 # Pre-initialize Wine
+if grep -q '#arch=win32' "${WINEPREFIX}system.reg" 2>/dev/null; then
+    echo "WINE: 32-bit prefix detected, removing and reinitialising as win64"
+    rm -rf "${WINEPREFIX}"
+fi
 if [ ! -f "${WINEPREFIX}system.reg" ]; then
     echo "WINE: Wine not initialized, initializing"
+    echo "WINE: wine=$(which wine), wine64=$(which wine64 2>/dev/null || echo 'not found')"
     echo "WINE: Version $(wine --version)"
     wineboot -i
     # Set Windows version to Windows 10
