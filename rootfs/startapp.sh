@@ -23,8 +23,8 @@ log_message() {
 # Pre-initialize Wine
 if [ ! -f "${WINEPREFIX}system.reg" ]; then
     echo "WINE: Wine not initialized, initializing"
+    echo "WINE: Version $(wine --version)"
     wineboot -i
-    WINETRICKS_ACCEPT_EULA=1 winetricks -q -f dotnet48
     # Set Windows version to Windows 10
     WINETRICKS_ACCEPT_EULA=1 winetricks -q win10
     log_message "WINE: Initialization done and set to Windows 10"
