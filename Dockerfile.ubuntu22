@@ -19,7 +19,7 @@ RUN apt-get update && \
     curl -fsSL https://dl.winehq.org/wine-builds/winehq.key | gpg --dearmor -o /etc/apt/keyrings/winehq.gpg && \
     echo "deb [arch=amd64,i386 signed-by=/etc/apt/keyrings/winehq.gpg] https://dl.winehq.org/wine-builds/ubuntu/ jammy main" > /etc/apt/sources.list.d/winehq.list && \
     apt-get update && \
-    apt-get install -y wine-devel wine-devel:i386 && \
+    apt-get install -y wine-devel && \
     apt-get install -y winetricks && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y locales && \
     sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \

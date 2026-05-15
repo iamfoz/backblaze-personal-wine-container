@@ -91,11 +91,11 @@ fetch_and_install() {
 
 start_app() {
     log_message "STARTAPP: Starting Backblaze version $(cat "$local_version_file")"
-    wine "${WINEPREFIX}drive_c/Program Files (x86)/Backblaze/bzbui.exe" -noquiet &
+    wine "${WINEPREFIX}drive_c/Program Files/Backblaze/bzbui.exe" -noquiet &
     sleep infinity
 }
 
-if [ -f "${WINEPREFIX}drive_c/Program Files (x86)/Backblaze/bzbui.exe" ]; then
+if [ -f "${WINEPREFIX}drive_c/Program Files/Backblaze/bzbui.exe" ]; then
     check_url_validity() {
         url="$1"
         if http_code=$(curl -s -o /dev/null -w "%{http_code}" "$url"); then
