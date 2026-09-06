@@ -431,7 +431,7 @@ def draw(scr,d,st):
         yy=rec_top+2; rows=d["recent"][-(rec_h-3):]
         if not rows: aw(scr,yy,2,"(watching for completions…)",NORM)
         for r in rows:
-            th,size,rate=rec_cols(r)
+            th,size,rate=rec_cols(r, wide=False)
             aw(scr,yy,2,wclip("%-8s  %-6s  %-9s  %-12s    %s"%(r["t"],th,size,rate,r["name"]),w-4),NORM); yy+=1
         box(scr,rec_top,0,rec_h,w,"Recently Completed",BORD,TIT)
     aw(scr,foot,0," "*w,HI)

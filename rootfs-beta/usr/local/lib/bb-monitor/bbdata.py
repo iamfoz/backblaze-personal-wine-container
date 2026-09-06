@@ -43,6 +43,10 @@ LFDIR = BZ + "/bzbackup/bzdatacenter/bzcurrentlargefile"
 FLISTS = BZ + "/bzfilelists"
 PERFXML = BZ + "/bzreports/bzperf_measured_upload.xml"
 RPTS = BZ + "/bzreports"
+# One row per completed HTTPS request, one file per day of the month. The rows
+# for files the datacenter already held read "dedup - 0 bytes", and they are the
+# only record that a small file was checked rather than sent.
+RPTLOG = BZ + "/bzlogs/bzreports_lastfilestransmitted"
 BZINFO = BZ + "/bzinfo.xml"
 
 _logged = set()
@@ -965,11 +969,81 @@ def _parts_progress(name, fsize, part):
     return (0, total)
 
 
-def rec_cols(r):
+_dedup_cache = {"key": None, "names": {}}
+DEDUP_TAIL = 400          # rows read from the end of the day's report
+
+
+def dedup_names():
+    """{file name: HH:MM:SS} for recent "dedup - 0 bytes" rows in the client's
+    transmission report: files it checked against the datacenter and did not
+    send because the datacenter already had them.
+
+    After a restart the client re-checks the small files between its checkpoint
+    and where it had got to, one round trip each, and names each one as it goes.
+    Without this those showed in Recently Completed with dashes in every column,
+    which read as a transfer nobody could measure rather than a file that did not
+    need one. Confirmed against a live log: the row for a file appeared three
+    seconds before the monitor saw the client move on from it.
+
+    Today's file and, in the first minutes of a day, yesterday's. Re-read only
+    when the file changes, since this runs on every poll.
+    """
+    now = time.localtime()
+    paths = [RPTLOG + "/%02d.log" % now.tm_mday]
+    if now.tm_hour == 0 and now.tm_min < 10:
+        yday = time.localtime(time.time() - 86400)
+        paths.insert(0, RPTLOG + "/%02d.log" % yday.tm_mday)
+    key = []
+    for p in paths:
+        try:
+            key.append((p, os.stat(p).st_mtime_ns))
+        except OSError:
+            key.append((p, None))
+    if key == _dedup_cache["key"]:
+        return _dedup_cache["names"]
+    names = {}
+    for p, _ in key:
+        try:
+            with open(p, "rb") as fh:
+                fh.seek(0, 2)
+                fh.seek(max(0, fh.tell() - DEDUP_TAIL * 200))
+                tail = fh.read().decode("utf-8", "replace").splitlines()[-DEDUP_TAIL:]
+        except OSError:
+            continue
+        for line in tail:
+            if "dedup - 0 bytes" not in line:
+                continue
+            # "2026-09-06 01:02:56 -  small  - throttle x  -  -  dedup - 0 bytes - D:\...\name"
+            path = line.rsplit(" - ", 1)[-1].strip()
+            name = path.replace("/", "\\").split("\\")[-1]
+            m = re.match(r"\d{4}-\d{2}-\d{2} (\d{2}:\d{2}:\d{2})", line)
+            if name:
+                names[name] = m.group(1) if m else ""
+    _dedup_cache["key"] = key
+    _dedup_cache["names"] = names
+    return names
+
+
+def mark_dedup(rows):
+    """Flag the small rows whose file the report shows as already held."""
+    names = None
+    for r in rows:
+        if r.get("small") and not r.get("dedup"):
+            if names is None:
+                names = dedup_names()
+            if r["name"] in names:
+                r["dedup"] = True
+
+
+def rec_cols(r, wide=True):
     # A file too small to catch in flight has no thread, no measured size and no
-    # rate. Its name and the time it was dealt with are all there is.
+    # rate. Its name and the time it was dealt with are all there is, unless the
+    # report says the datacenter already held it, which is worth a word. The
+    # terminal's Size column is nine characters, so it gets the client's own
+    # word for it; the web page has room for the sentence.
     if r.get("small"):
-        return ("\u2014", "\u2014", "\u2014")
+        held = ("already backed up" if wide else "dedup") if r.get("dedup") else "\u2014"
+        return ("\u2014", held, "\u2014")
     if r["chunked"]:
         span = r["last"] - r["first"]
         if span < 0:
@@ -1289,8 +1363,11 @@ def gather(prev):
         if prev and prev != act["file"] and not any(r["name"] == prev for r in _recent):
             _recent.append({"chunked": False, "small": True, "name": prev, "thr": 0,
                             "t": time.strftime("%H:%M:%S"), "bytes": 0,
-                            "secs": 0, "kbit": 0})
+                            "secs": 0, "kbit": 0, "dedup": False})
         _last_named[0] = act["file"]
+    # The report row for a checked file lands a few seconds around the client
+    # moving on from it, so every poll looks again at the rows not yet marked.
+    mark_dedup(_recent)
     # bzcurrentlargefile/ is not cleared when a file finishes, so its presence
     # proves nothing: it still named a completed film, at 0/21, while the client
     # was producing file lists. The map is only real while that file is the one

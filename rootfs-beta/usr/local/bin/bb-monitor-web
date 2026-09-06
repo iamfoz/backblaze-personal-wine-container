@@ -1577,8 +1577,10 @@ def api_v1_payload(d):
                        bytes=r["bytes"], seconds=max(0, r["last"] - r["first"]))
         elif r.get("small"):
             # Caught from the client naming it, not from a transfer record, so
-            # there is no thread, size or rate to report.
-            row.update(measured=False)
+            # there is no thread, size or rate to report. dedup is true when the
+            # client's report shows the datacenter already held the file and
+            # nothing was sent, which is what a restart's opening batch is.
+            row.update(measured=False, dedup=bool(r.get("dedup")))
         else:
             row.update(thread=r["thr"], bytes=r["bytes"], seconds=r["secs"],
                        kbit_per_sec=r["kbit"], measured=True)
