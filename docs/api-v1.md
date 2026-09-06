@@ -200,7 +200,7 @@ host. Examine it before you send it anywhere.
 
 Requires `read`. The status as a few lines of plain text: build and uptime, state and rate,
 progress and ETA, health, today's uploads. It is what a maintainer asks for first in a
-support thread. Nothing in it names a file.
+support thread. No file names.
 
 ### `GET /api/v1/metrics`
 
@@ -214,7 +214,7 @@ and retries, compression saved, days since a completed pass.
 Requires `read`. A server-sent event stream. One `state` event when the state, the pause,
 the health warnings, the skipped count, completion or milestones change, with a JSON
 object holding those fields and a time. A comment line every fifteen seconds keeps the
-connection known alive. The stream closes when you disconnect.
+connection alive. The stream closes when you disconnect.
 
 ```
 event: state
@@ -243,7 +243,7 @@ with `joined_existing: true`. Returns the job.
 
 Requires `diagnose` or `diagnose:repair`. The job, with the tool's output so far in
 `lines`. `state` is `running`, `done` or `failed`. `exit_code` is the tool's own; for
-`bb-doctor`, 1 means it found problems, and `result` says so in words. The container
+`bb-doctor`, 1 means it found problems, and `result` gives the meaning. The container
 discards a finished job after an hour.
 
 ## Schema versioning
@@ -299,7 +299,7 @@ What the client is working on right now. `null` when it is doing nothing.
 
 ### `pause_label`
 
-The pause in words, or `null` when not paused: `who` (`here`, `client` or `unknown`),
+The pause as text, or `null` when not paused: `who` (`here`, `client` or `unknown`),
 `title`, `detail`, the client's `code`, `until` as epoch seconds and `until_str` as local
 `HH:MM`. `here` means the pause was set from the Monitor, this API or bzcli; `client` means
 the client paused itself, for example `ca_down_but_network_alive` when Backblaze's cluster
@@ -558,7 +558,7 @@ connection rather than open one per request.
 Poll no faster than `poll_interval_seconds`. The container refreshes on its own schedule,
 and a faster poll returns the same snapshot.
 
-Handle `null` everywhere. Every optional field above is genuinely absent in ordinary
+Handle `null` everywhere. Every optional field above is absent in ordinary
 conditions, not only after an error.
 
 Do not parse `state` or `activity.phase` for control flow. Use them for display only. They

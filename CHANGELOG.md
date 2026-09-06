@@ -303,19 +303,17 @@ a stable release.
   Download button. `bb-doctor` has a checkbox for `--fix`. The page shows what `--fix` can
   change and asks for confirmation before it runs. One run per tool at a time: a second
   click while a run is in progress joins the run. Every run is written to the container
-  log with its command. The page runs as the container user, which is the user whose
-  permissions the checks are about. The tab sits behind the web login, like the rest of
-  the dashboard.
+  log with its command. The page runs as the container user, so the permission checks test
+  the right user. The tab sits behind the web login, like the rest of the dashboard.
 
   `bb-health` shows its answer in its own card, with a tick, a warning sign or a cross,
-  and the tool's lines under it. Its whole output is a verdict, so an output box and a
-  Download button had no purpose there. The output boxes of `bb-doctor` and `bb-version`
+  and the tool's lines under it. Its output is a verdict, so it has no output box and no
+  Download button. The output boxes of `bb-doctor` and `bb-version`
   have a Hide button and a Show button. Every card has a Clear result button, which
   removes the result from the page and from the service, so a reload does not bring it
   back. A run in progress cannot be cleared until it finishes.
-- `bb-doctor` no longer warns about low RAM when the host has swap. The peaks that matter
-  land in swap instead of ending in an out-of-memory kill, and not everyone can add memory
-  to the host. With less than 12 GB and swap present, the line reads OK and names the swap.
+- `bb-doctor` no longer warns about low RAM when the host has swap. Swap absorbs the peaks
+  that would otherwise end in an out-of-memory kill, and not everyone can add memory. With less than 12 GB and swap present, the line reads OK and names the swap.
   With less than 12 GB and no swap, the warning stands. Beta only, through the same
   build-time patch as the other `bb-doctor` additions, so the console and the Tools tab
   give the same answer.
@@ -333,20 +331,22 @@ a stable release.
 
 - The pause says why, and until when. The client writes a reason code and a deadline with
   every pause, and the data layer read both, but the pages showed a flag. Now the Monitor's
-  state line, the Status tab, the terminal monitor and the API carry the reason in words,
+  state line, the Status tab, the terminal monitor and the API carry the reason as plain text,
   with the client's code in a tooltip: "Paused from here" for a pause set from the Monitor,
   the API or bzcli; "Paused by the client" with the cause when the client chose it, for
   example when Backblaze's cluster authority is not answering, which is usually their
-  maintenance and resumes on its own. A pause set from here is a button; a pause the client
-  chose is a wait, and the page says which.
-- Notifications. The Settings tab has a Notifications section. Add an ntfy topic or a webhook
-  that receives JSON, with an optional bearer token or basic auth, and choose the events:
+  maintenance and resumes on its own. A pause set from here is ended from the Monitor; one
+  the client chose ends when the client decides. The page says which.
+- Notifications. The Settings tab has a Notifications section. Add an ntfy topic, a Pushbullet,
+  Discord, Slack or Gotify endpoint, a webhook that receives JSON, or a custom JSON body with
+  placeholders for anything else, with an optional bearer token or basic auth, and choose the
+  events:
   safety freeze, files skipped from a threshold, no completed backup within the client's
   own limit, a stall that `bb-health` reports, a pause the client chose, first backup
   complete, a milestone, and a container build change. Each event is sent once when it
-  starts and once when it clears, never on every poll, and the conditions are remembered on
-  disk so a restart does not send them again. Delivery makes three attempts and then logs
-  the failure; there is no queue. Nothing that names a file is ever sent. A Test button
+  starts and once when it clears, and the conditions are remembered on disk so a restart
+  does not send them again. Delivery makes three attempts and then logs the failure; there
+  is no queue. No file names are sent. A Test button
   sends a message to one endpoint. Tokens are stored in `/config/bb-api`, readable by the
   container user only, because they have to be sent and so cannot be hashed.
 - Quiet hours. The Settings tab has a schedule of pause windows: days of the week, a start and
@@ -357,15 +357,15 @@ a stable release.
   tab reads "Paused for quiet hours" with the time it resumes.
 - Copy status summary. A button in the Monitor's settings and on the Status tab copies
   five lines of plain text: build and uptime, state and rate, progress and ETA, health,
-  today's uploads. It is what a maintainer asks for first, and nothing in it names a file.
-  The same text is at `GET /api/v1/summary`.
+  today's uploads. It is what a maintainer asks for first. No file names. The same text is
+  at `GET /api/v1/summary`.
 - `bb-doctor` checks the source drives. For each mapped drive it reads the root and a
   sample of the first-level entries as the container user and names anything it cannot
   read, with the owner and the `chown` line. This finds a wrong owner before the client has
   to give up on files. It also compares the volume id the client wrote under `.bzvol` with
   the volumes the client lists in `bzvolumes.xml`. A drive the client no longer recognises
-  is the "No files are selected" state after an inherit onto a fresh install, and until now
-  nothing named it. No repair for either: these are the user's files and the backup's
+  is the "No files are selected" state after an inherit onto a fresh install, and nothing
+  reported it before. No repair for either: these are the user's files and the backup's
   identity. Beta only, through the same build-time patch as the other additions.
 - `bb-health` reports FROZEN, exit 1, when Backblaze has safety-frozen the backup, so a
   frozen backup shows unhealthy in the Docker tab instead of healthy. `bb-watchdog` acts
@@ -393,8 +393,9 @@ a stable release.
   the client's flicker between Transmitting and Preparing on small files does not split it.
   Files that finished before the spell began are not counted in it; a multi-part file counts
   its final size; a small file the datacenter already held counts as already backed up, not
-  as uploaded, so the line after a restart says what the restart did. The safety-freeze notice links to the Backblaze page on resolving one
-  and says what the uninstall step means in this container: delete the client's program
+  as uploaded, so the line after a restart says what the restart did. The safety-freeze
+  notice links to the Backblaze page on resolving one and says what the uninstall step means
+  in this container: delete the client's program
   directory and restart, and never recreate the Wine prefix, which would destroy the backup
   state.
 - The Monitor shows more. "Today:" under the seven-day chart, with the client's counts for
@@ -405,8 +406,8 @@ a stable release.
   or starts the backup. The list is in the settings dialog.
 - The browser tab's title carries the state: a dot while uploading, a pause mark while
   paused, an exclamation mark while a warning is raised.
-- The desktop pane looks after itself. When noVNC reports the connection is gone, a notice
-  with a Reconnect button appears above the pane and reloads the frame.
+- The desktop pane can reconnect. When noVNC reports the connection is gone, a notice with a
+  Reconnect button appears above the pane and reloads the frame.
 - Every page honours every theme. The thirteen palettes were defined in the Monitor's page
   only; the Status, Tools and API pages knew one of them. The palettes now live in one
   block spliced into every page, so a theme chosen in the Monitor applies everywhere.
@@ -417,10 +418,19 @@ a stable release.
   announced to a screen reader when they change. Animations stop when the browser asks for
   reduced motion.
 - `bb-health`'s description on the Tools tab reads "with diagnostic information".
+- Notifications send the shape each service wants. A Pushbullet user found that the generic
+  webhook did not work: Pushbullet requires `{"type": "note", "title", "body"}` and answers
+  400 to anything else, and Discord (`content`) and Slack (`text`) have requirements of their
+  own. There are now named kinds for Pushbullet, Discord, Slack and Gotify, each sending the fields that
+  service documents and, for Gotify, its `X-Gotify-Key` header. A custom kind takes a JSON
+  body you write with `{title}`, `{message}`, `{event}`, `{container}`, `{build}`, `{state}`,
+  `{time}` and `{priority}` placeholders, escaped for you, and it is checked as JSON when you
+  save. The generic webhook now carries `body` alongside `message`, a name some receivers
+  expect. The Settings page shows a hint and the right URL for each kind.
 - Recently Completed says "already backed up" for a small file the client checked and did
   not send. After a restart the client re-checks the small files between its checkpoint and
   where it had got to, one round trip each, and names each one as it goes; those rows showed
-  dashes in every column, which read as a transfer nobody could measure. The client's
+  dashes in every column. The client's
   transmission report records each such check as "dedup - 0 bytes", and the monitors now
   read those rows and say so. The API row carries `dedup: true`. Confirmed on a live
   container: the report row for a file appeared three seconds before the monitor saw the

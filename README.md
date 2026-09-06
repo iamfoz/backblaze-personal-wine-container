@@ -416,8 +416,8 @@ a full disk, a wedged transfer) is reported with what to do about it.
 
 On the beta image the Tools tab of the web interface runs `bb-doctor`, `bb-health` and
 `bb-version` from the browser and shows the output on the page, with `--fix` as a
-checkbox that asks for confirmation. It runs the same programs as the console. There is
-no second copy to drift. The Status tab lists everything the client says needs attention,
+checkbox that asks for confirmation. It runs the same programs as the console; there is
+no second copy. The Status tab lists everything the client says needs attention,
 with the reason for a pause and what to do about a safety freeze, and has a Copy status
 summary button that gives the five lines a maintainer asks for first.
 
@@ -425,10 +425,10 @@ The beta `bb-doctor` also checks each mapped drive: that the container user can 
 root and its first-level folders, and that the client still recognises the drive's
 identity, which is the fault behind "No files are selected" after an inherit.
 
-One thing to know about the console. `docker exec` enters the container as root, and root
-passes every permission test, so a `bb-doctor` run from the console could not tell you
-that the container user cannot read your files. The beta `bb-doctor` restarts itself as
-the container user when it is started as root, so its answer is the right one. On the
+A note on the console. `docker exec` enters the container as root, and root passes every
+permission test, so a `bb-doctor` run from the console could not tell you that the
+container user cannot read your files. The beta `bb-doctor` restarts itself as the
+container user when it is started as root, so its answer is correct. On the
 stable image, or to be sure, run it as that user:
 
 ```
@@ -507,7 +507,7 @@ speed without building anything yourself. Point your container's Repository fiel
 the tag above to switch, and back to `latest` to switch away. Your `/config` volume
 carries over either way.
 
-It differs from the stable images in four ways worth knowing:
+It differs from the stable images in four ways:
 
 - The Wine in it is **built from source with a patch that WineHQ has not yet
   reviewed**. The fix is filed as [WineHQ bug 59893](https://bugs.winehq.org/show_bug.cgi?id=59893)
@@ -516,9 +516,10 @@ It differs from the stable images in four ways worth knowing:
 - It tracks **Ubuntu 26.04**, the newer LTS, rather than the stable default.
 - It is rebuilt on a schedule rather than pinned to a release, so it moves.
 - The web interface has Monitor, Status, Tools, API and Settings tabs beside the desktop,
-  and the key-authenticated HTTP API. Settings holds Notifications (ntfy or a webhook, on
-  a safety freeze, skipped files, a stall, a pause the client chose, and more) and Quiet
-  hours (pause windows on a weekly schedule). These are described in the changelog and in
+  and the key-authenticated HTTP API. Settings holds Notifications (ntfy, Pushbullet,
+  Discord, Slack, Gotify, a JSON webhook or a custom JSON body, on a safety freeze, skipped
+  files, a stall, a pause the client chose, and more) and Quiet hours (pause windows on a
+  weekly schedule). These are described in the changelog and in
   [`docs/api-v1.md`](docs/api-v1.md).
 
 Use the stable tags unless upload speed is the reason you are here. When the fix
