@@ -9,13 +9,18 @@
 # says nothing; one line per real spell says how the backup is doing.
 #
 # Files and bytes are counted from the completed transfers the monitor already
-# tracks, each seen once. Rate, threads, memory and swap are means over the
-# samples taken while uploading.
+# tracks. Rows present when the spell starts belong to an earlier one and are
+# not counted; a multi-part file's bytes are taken as they stand at the end, not
+# at first sight; and a small file the datacenter already held is counted as
+# checked, not as uploaded. Rate, threads, memory and swap are means over the
+# samples taken while uploading. A long spell gets a line every hour so a day of
+# uploading is not one line at the end of it.
 
 import time
 
 KEEP = 24 * 3600
 GAP = 60             # seconds without Transmitting before a spell is over
+REPORT_EVERY = 3600  # seconds between "so far" lines inside a spell
 _TX = ("Transmitting",)
 
 
@@ -57,14 +62,21 @@ class Timeline:
             self.entries.pop(0)
         return added
 
+    @staticmethod
+    def _rows(api):
+        return ((api.get("files") or {}).get("recent") or [])
+
     def _track(self, api, state, now):
         p = self.period
         if state in _TX:
             if p is None:
-                p = self.period = {"start": now, "last": now, "n": 0, "rate": 0.0,
-                                   "threads": 0, "mem": 0.0, "mem_n": 0,
-                                   "swap": 0.0, "swap_n": 0, "seen": set(),
-                                   "files": 0, "bytes": 0}
+                # Rows already in the list finished before this spell: remember
+                # them so they are not counted as this spell's work.
+                before = {(r.get("name"), r.get("time")) for r in self._rows(api)}
+                p = self.period = {"start": now, "last": now, "reported": now,
+                                   "n": 0, "rate": 0.0, "threads": 0,
+                                   "mem": 0.0, "mem_n": 0, "swap": 0.0, "swap_n": 0,
+                                   "before": before, "rows": {}, "held": set()}
             p["last"] = now
             p["n"] += 1
             p["rate"] += api.get("rate_bytes_per_sec") or 0
@@ -77,32 +89,43 @@ class Timeline:
             if sw.get("total_bytes"):
                 p["swap"] += sw.get("used_bytes") or 0
                 p["swap_n"] += 1
-            for r in ((api.get("files") or {}).get("recent") or []):
+            for r in self._rows(api):
                 key = (r.get("name"), r.get("time"))
-                if key not in p["seen"]:
-                    p["seen"].add(key)
-                    p["files"] += 1
-                    p["bytes"] += r.get("bytes") or 0
+                if key in p["before"]:
+                    continue
+                if r.get("dedup"):
+                    p["held"].add(key)
+                    continue
+                # Latest figure wins: a multi-part row's bytes grow as parts land.
+                p["rows"][key] = r.get("bytes") or 0
+            if now - p["reported"] >= REPORT_EVERY:
+                p["reported"] = now
+                return [self._summary(p, now, so_far=True)]
             return []
         if p is not None and now - p["last"] > GAP:
             self.period = None
-            return [self._summary(p)]
+            return [self._summary(p, p["last"])]
         return []
 
-    def _summary(self, p):
+    def _summary(self, p, at, so_far=False):
         n = max(1, p["n"])
-        parts = ["Uploaded %d file%s" % (p["files"], "" if p["files"] == 1 else "s")]
-        if p["bytes"]:
-            parts[0] += " (%s)" % human(p["bytes"])
-        parts[0] += " in %s" % span(p["last"] - p["start"])
+        files, held = len(p["rows"]), len(p["held"])
+        total = sum(p["rows"].values())
+        what = "%d file%s" % (files, "" if files == 1 else "s")
+        if total:
+            what += " (%s)" % human(total)
+        elapsed = span(at - p["start"])
+        head = ("Uploading for %s: %s so far" % (elapsed, what) if so_far
+                else "Uploaded %s in %s" % (what, elapsed))
+        if held:
+            head += ", %d already backed up" % held
         avgs = ["%.1f Mbit/s" % (p["rate"] / n * 8 / 1e6),
                 "%.1f threads" % (p["threads"] / n)]
         if p["mem_n"]:
             avgs.append("mem %s" % human(p["mem"] / p["mem_n"]))
         if p["swap_n"]:
             avgs.append("swap %s" % human(p["swap"] / p["swap_n"]))
-        return {"at": int(p["last"]), "state": None,
-                "note": parts[0] + ": average " + ", ".join(avgs)}
+        return {"at": int(at), "state": None, "note": head + ": average " + ", ".join(avgs)}
 
     def listing(self):
         return list(self.entries)
