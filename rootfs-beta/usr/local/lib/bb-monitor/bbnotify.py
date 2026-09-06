@@ -28,12 +28,42 @@ import bbapi
 CONF = bbapi.DIR + "/notify.json"
 STATE = bbapi.DIR + "/notify-state.json"
 
-KINDS = ("ntfy", "webhook")
+# Each service wants its own shape. ntfy takes the text as the body with the title
+# in a header; the generic webhook gets everything as JSON; the named services get
+# the fields they document; "custom" renders a JSON template the user writes, with
+# placeholders, for anything not listed. A Pushbullet user found the gap: it needs
+# {"type": "note", ...} and answers 400 to anything else.
+KINDS = ("ntfy", "webhook", "pushbullet", "discord", "slack", "gotify", "custom")
+TEMPLATES = {
+    "pushbullet": '{"type": "note", "title": "{title}", "body": "{message}"}',
+    "discord":    '{"content": "**{title}**\\n{message}"}',
+    "slack":      '{"text": "*{title}*\\n{message}"}',
+    "gotify":     '{"title": "{title}", "message": "{message}", "priority": {priority}}',
+}
+PLACEHOLDERS = ("title", "message", "event", "container", "build", "state", "time", "priority")
+DEFAULT_URLS = {"pushbullet": "https://api.pushbullet.com/v2/pushes"}
+
+
+def render(template, values):
+    """Fill {name} placeholders inside a JSON template. Strings are escaped as
+    JSON string content, so a title with a quote in it stays valid JSON; numbers
+    go in bare, so {priority} can sit outside quotes."""
+    out = template
+    for k in PLACEHOLDERS:
+        v = values.get(k)
+        if isinstance(v, bool) or v is None:
+            rep_ = "null" if v is None else ("true" if v else "false")
+        elif isinstance(v, (int, float)):
+            rep_ = str(v)
+        else:
+            rep_ = json.dumps(str(v))[1:-1]
+        out = out.replace("{" + k + "}", rep_)
+    return out
 
 # (key, label, what it means, fires when it clears too)
 EVENTS = (
     ("frozen",        "Safety freeze",
-     "Backblaze has frozen the backup. Nothing is deleted; it needs a person.", True),
+     "Backblaze has frozen the backup. Nothing is deleted.", True),
     ("skipped",       "Files skipped",
      "The client has given up on files. Fires when the count reaches the threshold.", True),
     ("stale",         "No completed backup",
@@ -121,11 +151,20 @@ def save(conf):
         auth = (e.get("auth") or "none").strip()
         if auth not in ("none", "bearer", "basic"):
             raise ValueError("auth must be none, bearer or basic")
+        template = (e.get("template") or "").strip() if kind == "custom" else ""
+        if kind == "custom":
+            if not template:
+                raise ValueError("a custom endpoint needs a body template")
+            sample = {k: (3 if k in ("priority", "time") else 'x"y') for k in PLACEHOLDERS}
+            try:
+                json.loads(render(template, sample))
+            except ValueError:
+                raise ValueError("the body template is not valid JSON once the placeholders are filled")
         rec = {"id": e.get("id") or secrets.token_hex(4),
                "label": (e.get("label") or "").strip()[:60] or kind,
                "kind": kind, "url": url, "auth": auth,
                "token": (e.get("token") or "").strip() or kept.get(e.get("id") or "", ""),
-               "user": (e.get("user") or "").strip()}
+               "user": (e.get("user") or "").strip(), "template": template}
         out["endpoints"].append(rec)
     out["events"].update({k: bool(v) for k, v in (conf.get("events") or {}).items()
                           if k in out["events"]})
@@ -146,6 +185,9 @@ def public(conf):
         e["token"] = ""
     c["event_list"] = [{"key": k, "label": l, "does": d, "clears": c_}
                        for k, l, d, c_ in EVENTS]
+    c["kinds"] = list(KINDS)
+    c["placeholders"] = list(PLACEHOLDERS)
+    c["default_urls"] = dict(DEFAULT_URLS)
     return c
 
 
@@ -335,14 +377,24 @@ def send_once(ep, key, title, message, payload):
         elif ep.get("auth") == "basic" and ep.get("token"):
             cred = "%s:%s" % (ep.get("user", ""), ep["token"])
             headers["Authorization"] = "Basic " + base64.b64encode(cred.encode()).decode()
-        if ep.get("kind") == "ntfy":
+        kind = ep.get("kind") or "webhook"
+        priority = 5 if key in URGENT else 3
+        if kind == "ntfy":
             headers.update({"Title": title.encode("ascii", "replace").decode(),
-                            "Priority": "5" if key in URGENT else "3",
-                            "Tags": "backblaze"})
+                            "Priority": str(priority), "Tags": "backblaze"})
             body = message.encode("utf-8")
         else:
             headers["Content-Type"] = "application/json"
-            body = json.dumps(payload).encode("utf-8")
+            if kind == "gotify" and ep.get("token"):
+                headers["X-Gotify-Key"] = ep["token"]     # Gotify's own header
+            template = TEMPLATES.get(kind) or (ep.get("template") if kind == "custom" else None)
+            if template:
+                values = dict(payload, title=title, message=message, priority=priority)
+                body = render(template, values).encode("utf-8")
+            else:
+                # The generic shape, with "body" alongside "message" because that
+                # is the other name a receiver tends to look for.
+                body = json.dumps(dict(payload, body=message)).encode("utf-8")
         req = urllib.request.Request(ep["url"], data=body, headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             return 200 <= resp.status < 300, "HTTP %d" % resp.status

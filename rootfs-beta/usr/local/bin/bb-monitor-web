@@ -333,6 +333,11 @@ KEYS_HTML = """<!doctype html>
   .ep .f{display:flex;flex-direction:column;gap:2px;font-size:12px;color:var(--dim);}
   .ep .f input,.ep .f select{max-width:none;width:100%;}
   .ep .acts,.win .acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  .ep .ep-tpl,.ep .ep-hint{grid-column:1 / -1;}
+  .ep .f[hidden]{display:none;}    /* display:flex would otherwise beat the attribute */
+  .ep .ep-tpl textarea{width:100%;font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    padding:6px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--text);}
+  .ep .ep-hint{margin:0;font-size:12px;}
   .days{display:flex;gap:6px;flex-wrap:wrap;}
   .days label{display:inline-flex;gap:4px;align-items:center;font-size:12px;margin:0;}
   input[type=time],input[type=number]{padding:6px 8px;border-radius:4px;border:1px solid var(--border);
@@ -630,6 +635,11 @@ SETTINGS_HTML = """<!doctype html>
   .ep .f{display:flex;flex-direction:column;gap:2px;font-size:12px;color:var(--dim);}
   .ep .f input,.ep .f select{max-width:none;width:100%;}
   .ep .acts,.win .acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  .ep .ep-tpl,.ep .ep-hint{grid-column:1 / -1;}
+  .ep .f[hidden]{display:none;}    /* display:flex would otherwise beat the attribute */
+  .ep .ep-tpl textarea{width:100%;font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    padding:6px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--text);}
+  .ep .ep-hint{margin:0;font-size:12px;}
   .days{display:flex;gap:6px;flex-wrap:wrap;}
   .days label{display:inline-flex;gap:4px;align-items:center;font-size:12px;margin:0;}
   input[type=time],input[type=number]{padding:6px 8px;border-radius:4px;border:1px solid var(--border);
@@ -669,15 +679,13 @@ SETTINGS_HTML = """<!doctype html>
 </style></head><body>
 
 <h1>Settings</h1>
-<p class="dim">How the container tells you about the backup, and when it should leave it alone.
-Keys for the HTTP API are on the API tab.</p>
 
 <h2>Notifications</h2>
 <div class="panel" id="notify">
-  <p class="dim">The container tells you when the backup needs you. Send to an ntfy topic, or JSON to
-  a webhook that Home Assistant, Gotify, Discord, Slack or a script can take. Each event is sent once
-  when it starts and once when it clears, never on every poll. Nothing that names a file is ever
-  sent: the skipped-files event carries a count and a reason.</p>
+  <p class="dim">Get a message when something happens to the backup. Supported: ntfy, Pushbullet,
+  Discord, Slack, Gotify, a plain JSON webhook (Home Assistant, your own script), or a JSON body
+  you write yourself. An event is sent when it starts and again when it clears. Messages carry
+  counts and reasons, not file names.</p>
   <div id="endpoints"></div>
   <button class="ghost" id="ep-add">Add endpoint</button>
   <h3>Events</h3>
@@ -717,7 +725,13 @@ function post(path, body){
 }
 // ---- notifications ----
 var NOTIFY = null;
-var KINDS = [['ntfy', 'ntfy topic'], ['webhook', 'Webhook (JSON)']];
+var KINDS = [['ntfy', 'ntfy topic'], ['pushbullet', 'Pushbullet'], ['discord', 'Discord webhook'],
+             ['slack', 'Slack webhook'], ['gotify', 'Gotify'], ['webhook', 'Webhook (JSON)'], ['custom', 'Custom JSON body']];
+// What goes in the URL box for each kind, and which kinds want a token by default.
+var URL_HINT = {ntfy: 'https://ntfy.sh/your-topic', pushbullet: 'https://api.pushbullet.com/v2/pushes',
+                discord: 'https://discord.com/api/webhooks/...', slack: 'https://hooks.slack.com/services/...',
+                gotify: 'https://gotify.example/message', webhook: 'https://your-receiver/hook', custom: 'https://your-receiver/hook'};
+var AUTH_DEFAULT = {pushbullet: 'bearer', gotify: 'none'};
 var AUTHS = [['none', 'No auth'], ['bearer', 'Bearer token'], ['basic', 'Basic auth']];
 function opts(list, cur){ return list.map(function(o){ return '<option value="'+esc(o[0])+'"'+(o[0]===cur?' selected':'')+'>'+esc(o[1])+'</option>'; }).join(''); }
 function epRow(e, i){
@@ -729,12 +743,35 @@ function epRow(e, i){
     '<label class="f">User (basic)<input type="text" class="ep-user" value="'+esc(e.user||'')+'"></label>' +
     '<label class="f">Token or password<input type="password" class="ep-token" value="" placeholder="'+(e.has_token ? 'set, leave blank to keep' : '')+'" autocomplete="new-password"></label>' +
     '<div class="acts"><button class="ghost ep-test" '+(e.id ? '' : 'disabled title="Save first"')+'>Test</button>' +
-    '<button class="ghost ep-remove">Remove</button><input type="hidden" class="ep-id" value="'+esc(e.id||'')+'"></div></div>';
+    '<button class="ghost ep-remove">Remove</button><input type="hidden" class="ep-id" value="'+esc(e.id||'')+'"></div>' +
+    '<label class="f ep-tpl"' + ((e.kind||'ntfy') === 'custom' ? '' : ' hidden') + '>Body template, JSON. Placeholders: ' +
+      '{title} {message} {event} {container} {build} {state} {time} {priority}' +
+      '<textarea class="ep-template" rows="3" spellcheck="false">' + esc(e.template || '{"title": "{title}", "text": "{message}"}') + '</textarea></label>' +
+    '<p class="dim ep-hint"></p></div>';
+}
+var KIND_HINT = {
+  pushbullet: 'Auth: Bearer with your Pushbullet access token. Sent as a note with the event as its title.',
+  gotify: 'Put the application token in the token box; it is sent as X-Gotify-Key. Priority 5 for a freeze or a stall, 3 otherwise.',
+  discord: 'The webhook URL carries its own secret; leave auth at none.',
+  slack: 'The incoming-webhook URL carries its own secret; leave auth at none.',
+  ntfy: 'Title, priority and tag go in headers; the message is the body. Add a token if the topic is protected.',
+  webhook: 'JSON with container, build, event, title, message, body, state and time. For Home Assistant or a script.',
+  custom: 'Your own JSON body. Strings are escaped for you; {priority} and {time} are numbers.'
+};
+function applyKind(row){
+  var kind = row.querySelector('.ep-kind').value;
+  row.querySelector('.ep-url').placeholder = URL_HINT[kind] || '';
+  row.querySelector('.ep-tpl').hidden = kind !== 'custom';
+  row.querySelector('.ep-hint').textContent = KIND_HINT[kind] || '';
+  if(AUTH_DEFAULT[kind] && !row.querySelector('.ep-id').value) row.querySelector('.ep-auth').value = AUTH_DEFAULT[kind];
+  var url = row.querySelector('.ep-url');
+  if(!url.value && kind === 'pushbullet') url.value = URL_HINT.pushbullet;
 }
 function renderNotify(d){
   NOTIFY = d;
   document.getElementById('endpoints').innerHTML = (d.endpoints||[]).map(epRow).join('') ||
     '<p class="dim">No endpoints yet.</p>';
+  [].slice.call(document.querySelectorAll('#endpoints .ep')).forEach(applyKind);
   document.getElementById('events').innerHTML = (d.event_list||[]).map(function(ev){
     return '<label><input type="checkbox" class="ev-key" value="'+esc(ev.key)+'"'+(d.events[ev.key] ? ' checked' : '')+
            '><span><strong>'+esc(ev.label)+'</strong>'+(ev.clears ? ' <span class="dim">(and when it clears)</span>' : '')+
@@ -746,7 +783,7 @@ function collectNotify(){
   var eps = [].slice.call(document.querySelectorAll('#endpoints .ep')).map(function(r){
     var g = function(c){ var el = r.querySelector(c); return el ? el.value : ''; };
     return {id: g('.ep-id'), label: g('.ep-label'), kind: g('.ep-kind'), url: g('.ep-url'),
-            auth: g('.ep-auth'), user: g('.ep-user'), token: g('.ep-token')};
+            auth: g('.ep-auth'), user: g('.ep-user'), token: g('.ep-token'), template: g('.ep-template')};
   });
   var events = {};
   [].slice.call(document.querySelectorAll('.ev-key')).forEach(function(c){ events[c.value] = c.checked; });
@@ -759,6 +796,10 @@ document.getElementById('ep-add').addEventListener('click', function(){
   var box = document.getElementById('endpoints');
   if(box.querySelector('p')) box.innerHTML = '';
   box.insertAdjacentHTML('beforeend', epRow({kind:'ntfy', auth:'none'}, box.children.length));
+  applyKind(box.lastElementChild);
+});
+document.getElementById('endpoints').addEventListener('change', function(e){
+  if(e.target.classList && e.target.classList.contains('ep-kind')) applyKind(e.target.closest('.ep'));
 });
 document.getElementById('endpoints').addEventListener('click', function(e){
   var t = e.target; if(!t.classList) return;
@@ -938,7 +979,7 @@ them.</p>
 <div class="controls">
   <input type="text" id="filter" placeholder="Filter by name or path" autocomplete="off" hidden>
   <button class="ghost" id="refresh">Refresh</button>
-  <button class="ghost" id="summary" title="Five lines of plain text for a forum post or an issue. Nothing in it names a file.">Copy status summary</button>
+  <button class="ghost" id="summary" title="Five lines of plain text for a forum post or an issue. No file names.">Copy status summary</button>
 </div>
 
 <div class="panel" id="none" hidden>
@@ -1081,7 +1122,7 @@ function renderNotices(j){
                             (q.window_end ? ', at ' + esc(fmtTime(q.window_end)) : '') + '.'
                : (pl.detail || 'Nothing uploads until the backup is started again, from the Monitor tab or the desktop.') +
                  (pl.until_str ? ' Until ' + esc(pl.until_str) + '.' : '');
-    var who = pl.who === 'client' ? ' The client chose this; it is not something to fix here.'
+    var who = pl.who === 'client' ? ' The client did this itself.'
             : pl.who === 'here' && !q.active ? ' Start it again from the Monitor tab when you are ready.' : '';
     out.push('<div class="notice n-warn"' + (pl.code ? ' title="' + esc(pl.code) + '"' : '') + '><strong>' +
              esc(title) + '</strong> ' + detail + who + '</div>');
@@ -1240,9 +1281,8 @@ TOOLS_HTML = """<!doctype html>
 </style></head><body>
 
 <h1>Tools</h1>
-<p class="dim">The same programs as on the console, run here as the container user, which is
-the user whose permissions the checks are about. The output is the program's own output.
-Copy it as it is into a forum post or an issue.</p>
+<p class="dim">Runs the same programs as the console, as the container user. Output is shown as
+the program prints it; copy it into a forum post or an issue.</p>
 <p class="dim" id="build"></p>
 
 <div id="tools"></div>
@@ -1279,9 +1319,8 @@ function showErr(e){ var el = document.getElementById('err');
 function clearErr(){ document.getElementById('err').hidden = true; }
 
 // The prefixes bb-doctor prints, and bb-health's three words. A line that
-// matches none of them is shown plain: a change of wording in a tool degrades
-// to monochrome and never hides output. This is the one contract between the
-// page and the tools, and it is a soft one on purpose.
+// matches none of them is shown plain, so a change of wording in a tool loses
+// colour and nothing else.
 function cls(line){
   if(line.indexOf('  [ ok ] ') === 0) return 'ok';
   if(line.indexOf('  [warn] ') === 0) return 'warn';
@@ -2112,7 +2151,7 @@ INDEX_HTML = """<!doctype html>
         <button id="copy-summary" type="button">Copy status summary</button>
       </div>
       <p class="fhint">Five lines of plain text for a forum post or an issue: build, state,
-         progress, health. Nothing in it names a file.</p>
+         progress, health. No file names.</p>
       <p class="fhint">Keys: <code>1</code> to <code>6</code> switch tabs, <code>s</code> opens
          this dialog, <code>p</code> pauses or starts the backup, <code>Esc</code> closes.</p>
     </div>
@@ -2327,9 +2366,8 @@ var aboutDone = false, aboutSince = null;
 // The start date travels at the top level of the payload rather than inside
 // about, because it describes this backup and not this build, so it is passed
 // in as a second argument instead of being dug out of a.
-// The state, and when paused, who paused it and until when. A bare "Paused" is
-// the question; the label is the answer, and the client's own code sits in the
-// tooltip for anyone searching Backblaze's help for it.
+// The state, and when paused, who paused it and until when. The client's own
+// reason code sits in the tooltip for anyone searching Backblaze's help for it.
 function stateHtml(d){
   var stateCls = d.state==='Transmitting' ? 'good' : (['Scanning','Preparing'].includes(d.state) ? 'warn' : '');
   var pl = d.pause_label;
@@ -2348,8 +2386,7 @@ function todayHtml(d){
          (d.upload_success[1] ? ', ' + d.upload_success[1] + ' retried' : '') +
          ', ' + sk + ' skipped</span>';
 }
-// Percent complete by day, one sample a day, as a small line. After months of
-// watching a bar, the line that shows it moving is the thing worth looking at.
+// Percent complete by day, one sample a day, as a small line.
 function progressSvg(hist){
   if(!hist || hist.length < 2) return '';
   var w = 320, h = 90, padL = 30, padB = 16, padT = 6;
