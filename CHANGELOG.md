@@ -387,9 +387,13 @@ a stable release.
 - The Status tab shows more. Milestones, each once for a week: a quarter, half, three
   quarters of the way, and the first terabyte. The last 24 hours as a list in a box that
   scrolls, newest first: every change of state, and after each spell of uploading one line
-  with what it amounted to, for example "Uploaded 28 files (1.4 GB) in 9m: average 40.0
-  Mbit/s, 8.0 threads, mem 1.9 GB, swap 95 MB". A spell allows gaps of up to a minute, so
-  the client's flicker between Transmitting and Preparing on small files does not split it. The safety-freeze notice links to the Backblaze page on resolving one
+  with what it amounted to, for example "Uploaded 28 files (1.4 GB) in 9m, 40 already backed
+  up: average 40.0 Mbit/s, 8.0 threads, mem 1.9 GB, swap 95 MB". A spell that runs for hours
+  gets a line every hour with the totals so far. A spell allows gaps of up to a minute, so
+  the client's flicker between Transmitting and Preparing on small files does not split it.
+  Files that finished before the spell began are not counted in it; a multi-part file counts
+  its final size; a small file the datacenter already held counts as already backed up, not
+  as uploaded, so the line after a restart says what the restart did. The safety-freeze notice links to the Backblaze page on resolving one
   and says what the uninstall step means in this container: delete the client's program
   directory and restart, and never recreate the Wine prefix, which would destroy the backup
   state.
@@ -425,7 +429,11 @@ a stable release.
 ### Changed
 - The tabs in the web interface are Desktop, Monitor, Status, Tools, API and Settings.
   "Upload Monitor" is now "Monitor" and "Skipped Files" is now "Status". Settings holds
-  notifications and quiet hours; API holds the keys. A saved tab or an old link
+  notifications and quiet hours; API holds the keys.
+- The tab row scrolls sideways when it does not fit the screen. A phone showed five tabs
+  and no sign of the sixth. Now a finger swipes the row, a mouse drags it, a fade with a
+  chevron at either edge says there is more in that direction, and the chosen tab is
+  scrolled into view when it is selected or linked to. A saved tab or an old link
   that names `skipped` opens the Status tab.
 - `bb-doctor` runs as the container user when you start it as root. `docker exec` enters
   the container as root, and root passes every permission test. `bb-doctor` uses
