@@ -494,6 +494,7 @@ repeat it.
 | `bytes` / `seconds` / `kbit_per_sec` | int | Transfer figures. |
 | `thread` | int | Which thread carried it. |
 | `measured` | bool | `false` for a file too small to observe during the transfer: the client named it and continued, so there is no thread, size or rate, and the container infers the completion rather than confirms it. |
+| `dedup` | bool | With `measured: false` only. `true` when the client's transmission report shows the datacenter already held the file and nothing was sent. After a restart the client re-checks the small files between its checkpoint and where it had got to, one round trip each; those rows carry `dedup: true`. |
 
 `chunk_map` — how far the parts of the large file that is currently being split have got,
 or `null` if there is none:

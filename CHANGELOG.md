@@ -413,6 +413,14 @@ a stable release.
   announced to a screen reader when they change. Animations stop when the browser asks for
   reduced motion.
 - `bb-health`'s description on the Tools tab reads "with diagnostic information".
+- Recently Completed says "already backed up" for a small file the client checked and did
+  not send. After a restart the client re-checks the small files between its checkpoint and
+  where it had got to, one round trip each, and names each one as it goes; those rows showed
+  dashes in every column, which read as a transfer nobody could measure. The client's
+  transmission report records each such check as "dedup - 0 bytes", and the monitors now
+  read those rows and say so. The API row carries `dedup: true`. Confirmed on a live
+  container: the report row for a file appeared three seconds before the monitor saw the
+  client move on from it.
 
 ### Changed
 - The tabs in the web interface are Desktop, Monitor, Status, Tools, API and Settings.
