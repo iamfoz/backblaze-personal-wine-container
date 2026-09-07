@@ -398,6 +398,28 @@ a stable release.
   in this container: delete the client's program
   directory and restart, and never recreate the Wine prefix, which would destroy the backup
   state.
+- The status panel is arranged in named rows: Now, Progress, Today and System. Twenty
+  readings in one wrapped line had become a wall of text. A row with nothing to show is left
+  out rather than drawn as a label with nothing after it.
+- The status panel can be trimmed. The Monitor's settings dialog has a Status panel section
+  with a checkbox per reading, grouped the same way as the rows, and three presets to start
+  from: Minimal, which leaves the state, the rate and the backup total; Normal; and
+  Everything. A preset ticks its boxes and leaves them free to change, so anything in
+  between takes no extra step. The choice is kept in the browser, like the theme, because a
+  phone wants less than a desk.
+- The terminal monitor has the same arrangement and the same choice. Its status area is in
+  the same four named rows, and its settings dialog has a Status panel tab listing every
+  reading with the same three presets, moved through with the arrow keys and toggled with
+  Enter. It keeps its own choice in `/config/bb-monitor.conf` beside the theme, because a
+  browser setting cannot reach a terminal.
+- The Settings tab says where the Monitor's own settings are. Two places to change settings
+  is confusing, so there is now a Monitor display section explaining that the theme, the
+  compact view and the status panel belong to each browser, with a button that shows the
+  Monitor and opens its settings at the status panel. The request travels to the frame as a
+  message rather than as a URL, because reloading the frame would drop its poll.
+- A percentage keeps its two decimal places as it moves. The payload carries two, but a
+  value of 23.40 prints as "23.4" from the number itself, so the figure changed width from
+  one poll to the next.
 - The Monitor shows more. "Today:" under the seven-day chart, with the client's counts for
   today: uploads, retried attempts, files skipped. A progress-over-time line in the About
   tab, one sample a day of percent complete, kept for a year. The exact bytes per second in
