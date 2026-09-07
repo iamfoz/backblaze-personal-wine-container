@@ -410,7 +410,11 @@ a stable release.
   Reconnect button appears above the pane and reloads the frame.
 - Every page honours every theme. The thirteen palettes were defined in the Monitor's page
   only; the Status, Tools and API pages knew one of them. The palettes now live in one
-  block spliced into every page, so a theme chosen in the Monitor applies everywhere.
+  block spliced into every page, so a theme chosen in the Monitor applies everywhere. The
+  dim text colour is derived from whichever palette is in force and now lives with the
+  palettes: it was defined for the plain pages only, so the Monitor's progress chart had no
+  value to resolve and its axis labels fell back to the SVG default, which is black on a
+  dark theme.
 - Text uses the width of the window. The Status, Tools and API pages capped prose at 70
   characters and the permission list at 52, which is about 375 pixels; the pages now use
   the same 1100-pixel measure as the Monitor, with prose at 100 characters inside it.
@@ -418,6 +422,41 @@ a stable release.
   announced to a screen reader when they change. Animations stop when the browser asks for
   reduced motion.
 - `bb-health`'s description on the Tools tab reads "with diagnostic information".
+- The backup total is shown to two decimal places. At one place a TB reading only moves
+  every 102.4 GB, which on an 87 TB backup is most of a day of uploading, and a whole
+  percent is several days; the terminal monitor showed a whole percent, which is worse. A
+  correct figure sat still long enough to be reported as a stuck counter. It now reads
+  20.31 TB and 23.37%, both of which move about hourly. Other figures keep one place: a
+  file size in the completed table gains nothing from a second. The Backup gauge's tooltip
+  also gives what this session has sent, which moves continuously. Two places brings the
+  figure from a day to about two hours, so the session figure beside it is still the one
+  that moves while you watch. Every other displayed figure was checked for the same fault
+  and moves within about ninety seconds. The first-backup percentage had it and now reads
+  two places as well.
+- Progress per drive, when more than one is mapped. Both files the totals come from carry a
+  figure per volume that nothing read until now, so each drive gets its own bar with the
+  files it has left. A single-share container shows nothing new, because the one bar would
+  repeat the total.
+- What is left, against what has gone. The client gives no size breakdown of the files
+  still to send, but the average size of the remainder against the average of what has
+  already gone is available, and it is the figure that explains a long estimate. On a live
+  container what remained averaged 602 MB a file against 8 MB for what had gone, which is
+  why 96% of the files was 23% of the bytes. It sits beside Files Remaining.
+- The rate's tooltip says what bounds it. Wine answers the ideal-send-backlog query with a
+  fixed 64 KB, so an upload connection holds at most that much in flight and its rate is
+  limited by that divided by the round trip. The monitor knows the round trip and the thread
+  count, so it can state the modelled limit and whether the observed rate is at it, below it
+  or above it. Stated as a measurement rather than as advice about thread counts: on a live
+  container the observed rate was above what the model predicts, so the figure is a floor of
+  unknown tightness and the container does not pretend otherwise.
+- The state reads "Checking" while the client is checking files it has already sent. After a
+  restart the client re-checks the small files between its checkpoint and where it had got
+  to; nothing is sent and no thread runs, so the state read "Transmitting" with everything
+  at zero, which looks like a stall and was reported as one.
+- Each notification endpoint shows how its last delivery went, on the Settings page. A
+  delivery that fails at three in the morning went to the container log, where nobody looks.
+  The state covers this run of the service and is not kept across a restart, because a stale
+  verdict would be worse than none.
 - Notifications send the shape each service wants. A Pushbullet user found that the generic
   webhook did not work: Pushbullet requires `{"type": "note", "title", "body"}` and answers
   400 to anything else, and Discord (`content`) and Slack (`text`) have requirements of their

@@ -274,7 +274,7 @@ format it for its own locale.
 | `build` | string | The build of this container that is running. Give this value in a bug report. |
 | `time` | int | When the container took this snapshot, epoch seconds. |
 | `poll_interval_seconds` | number | How often the container refreshes. A faster poll gives nothing more. |
-| `state` | string | What the client is doing, in its own words. It reads `Paused` during a pause. |
+| `state` | string | What the client is doing, in its own words. It reads `Paused` during a pause, and `Checking` while the client re-checks files it has already sent, when nothing is being uploaded and no thread runs. |
 | `paused` | bool | Whether a backup is paused. Use this field to draw a pause button. |
 | `threads` | int | Upload threads currently running. |
 | `rate_bytes_per_sec` | int | Current upload rate. |
@@ -304,6 +304,28 @@ The pause as text, or `null` when not paused: `who` (`here`, `client` or `unknow
 `HH:MM`. `here` means the pause was set from the Monitor, this API or bzcli; `client` means
 the client paused itself, for example `ca_down_but_network_alive` when Backblaze's cluster
 authority is not answering.
+
+### `per_volume`
+
+`null`, or a list of one entry per mapped drive: `guid`, `path`, `total`, `done`,
+`remaining`, `pct`, `total_files` and `remaining_files`, largest first. From the per-volume
+figures in the client's own total and remaining files. `path` falls back to the head of the
+volume guid when the client records no mount path for it.
+
+### `remaining_shape`
+
+`null`, or `{avg_remaining, avg_done, ratio}` in bytes: the average size of a file still to
+send against the average of one already sent. A high ratio means the remainder is made of
+large files and will take longer than its count suggests.
+
+### `rate_limits`
+
+`null`, or `{per_thread, modelled, observed, verdict}` in bytes per second. Wine answers
+`SIO_IDEAL_SEND_BACKLOG_QUERY` with a fixed 64 KB, so an upload connection holds at most
+that much in flight and is bounded by that divided by the round trip; `per_thread` is that
+bound and `modelled` is it multiplied by the live thread count. `verdict` is `at`, `below`
+or `above`. Treat `modelled` as a floor of unknown tightness rather than a ceiling to tune
+against: on a live container `observed` has been seen above it.
 
 ### `milestones`
 
