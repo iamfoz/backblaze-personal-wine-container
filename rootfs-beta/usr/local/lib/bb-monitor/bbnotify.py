@@ -88,6 +88,26 @@ BB_HEALTH = "/usr/local/bin/bb-health"
 _lock = threading.Lock()
 _health = {"verdict": None, "at": 0}
 
+# How each endpoint's last delivery went. A notification failing at three in the
+# morning went to the container log, where nobody looks; the Pushbullet endpoint
+# that could not work was only found by pressing Test. Kept in memory rather than
+# on disk: it describes this run of the service, and a stale verdict from before
+# a restart would be worse than none.
+_delivery = {}      # endpoint id -> {ok, detail, at, event}
+
+
+def delivery_state():
+    with _lock:
+        return dict(_delivery)
+
+
+def _record(ep, ok, detail, event):
+    if not ep.get("id"):
+        return
+    with _lock:
+        _delivery[ep["id"]] = {"ok": bool(ok), "detail": detail,
+                               "at": int(time.time()), "event": event}
+
 
 def default():
     return {"endpoints": [], "events": {k: True for k, _, _, _ in EVENTS},
@@ -180,9 +200,11 @@ def save(conf):
 def public(conf):
     """The configuration for display: tokens replaced by whether one is set."""
     c = json.loads(json.dumps(conf))
+    state = delivery_state()
     for e in c["endpoints"]:
         e["has_token"] = bool(e.get("token"))
         e["token"] = ""
+        e["last_delivery"] = state.get(e["id"])
     c["event_list"] = [{"key": k, "label": l, "does": d, "clears": c_}
                        for k, l, d, c_ in EVENTS]
     c["kinds"] = list(KINDS)
@@ -361,10 +383,12 @@ def _deliver(ep, key, title, message, payload):
         if ok:
             sys.stderr.write("bb-monitor-web: notified %s (%s): %s\n"
                              % (ep.get("label"), ep.get("kind"), title))
+            _record(ep, True, detail, key)
             return True
         last = detail
     sys.stderr.write("bb-monitor-web: notification to %s failed after %d attempts: %s\n"
                      % (ep.get("label"), len(RETRY_AFTER), last))
+    _record(ep, False, last, key)
     return False
 
 
@@ -409,9 +433,11 @@ def test(ep_id, conf=None):
     conf = conf or load()
     for ep in conf["endpoints"]:
         if ep["id"] == ep_id:
-            return send_once(ep, "test", "Backblaze 64 test",
+            ok, detail = send_once(ep, "test", "Backblaze 64 test",
                              "If you can read this, notifications work.",
                              {"container": socket.gethostname(), "event": "test",
                               "title": "Backblaze 64 test", "time": int(time.time()),
                               "message": "If you can read this, notifications work."})
+            _record(ep, ok, detail, "test")
+            return ok, detail
     return False, "no such endpoint"
