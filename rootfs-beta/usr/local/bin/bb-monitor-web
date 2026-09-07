@@ -724,6 +724,14 @@ SETTINGS_HTML = """<!doctype html>
   container user only. They have to be sent, so they cannot be hashed the way API keys are.</p>
 </div>
 
+<h2>Monitor display</h2>
+<div class="panel">
+  <p class="dim">The theme, the compact multi-part view and which readings the status panel
+  shows are set in the Monitor itself, because each browser keeps its own. This page holds
+  the settings the container keeps for everyone.</p>
+  <button id="to-monitor">Open the Monitor's settings</button>
+</div>
+
 <h2>Quiet hours</h2>
 <div class="panel" id="quiet">
   <p class="dim">Pause the backup on a schedule. At the start of a window the container asks the client
@@ -903,6 +911,14 @@ document.getElementById('windows').addEventListener('click', function(e){
     e.target.closest('.win').remove();
     if(!document.querySelector('#windows .win')) document.getElementById('windows').innerHTML = '<p class="dim">No windows yet.</p>';
   }
+});
+// Ask the shell to show the Monitor and open its settings on the status panel.
+// The Monitor's frame is loaded once and never re-pointed, so this travels as a
+// message rather than as a URL: a query string would need the frame reloaded,
+// which would drop its poll and its scroll position.
+document.getElementById('to-monitor').addEventListener('click', function(){
+  if(window.parent !== window) window.parent.postMessage({bb64: 'monitor-settings'}, location.origin);
+  else window.location = '/monitor/?settings=status';
 });
 document.getElementById('quiet-save').addEventListener('click', function(){
   var err = document.getElementById('quiet-err'), msg = document.getElementById('quiet-msg');
@@ -1984,8 +2000,18 @@ INDEX_HTML = """<!doctype html>
   body.compact #topbar,body.compact #footer{display:none;}
   body.compact main{padding:6px;max-width:none;}
   body.compact #panel-status{margin-bottom:0;}
-  #status-grid{display:flex;flex-wrap:wrap;gap:6px 26px;padding-top:6px;}
+  /* One flat wrap of twenty items read as a wall. The same items in named rows
+     read as four short lists, and each row can be switched off on its own. */
+  #status-grid{display:flex;flex-direction:column;gap:7px;padding-top:6px;}
+  .srow{display:flex;flex-wrap:wrap;gap:6px 26px;align-items:baseline;}
+  .srow-label{flex:0 0 5.5em;color:var(--dim);font-size:11px;text-transform:uppercase;
+       letter-spacing:.06em;padding-top:1px;}
+  .srow-items{display:flex;flex-wrap:wrap;gap:6px 26px;flex:1 1 0;min-width:0;align-items:baseline;}
   .stat{white-space:nowrap;}
+  @media (max-width:560px){
+    .srow{gap:2px;}
+    .srow-label{flex:1 0 100%;}
+  }
   .good{color:var(--good);} .warn{color:var(--warn);} .bad{color:var(--bad);}
   .gauge{display:inline-flex;align-items:center;gap:6px;}
   .gauge .track{width:120px;height:12px;background:var(--track-bg);border:1px solid var(--track-border);position:relative;overflow:hidden;}
@@ -2081,6 +2107,14 @@ INDEX_HTML = """<!doctype html>
   .frow{display:flex;justify-content:space-between;align-items:center;gap:16px;}
   .frow label{font-weight:bold;}
   .fhint{font-size:12px;opacity:.6;margin:6px 0 0;}
+  .tgroup{margin-top:10px;}
+  .tgroup-name{display:block;color:var(--dim);font-size:11px;text-transform:uppercase;
+       letter-spacing:.06em;margin-bottom:3px;}
+  label.tog{display:inline-flex;gap:5px;align-items:center;margin:0 14px 4px 0;font-size:12px;
+       white-space:nowrap;cursor:pointer;}
+  button.preset{font-family:inherit;font-size:12px;padding:4px 10px;border-radius:4px;
+       border:1px solid var(--border);background:transparent;color:var(--text);cursor:pointer;}
+  button.preset:hover{background:var(--border);color:var(--bg);}
   #theme-select{font-family:inherit;font-size:13px;background:var(--bg);color:var(--text);
        border:1px solid var(--border);border-radius:2px;padding:3px 6px;cursor:pointer;}
   .adl{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;font-size:13px;margin:0;}
@@ -2202,6 +2236,14 @@ INDEX_HTML = """<!doctype html>
          progress, health. No file names.</p>
       <p class="fhint">Keys: <code>1</code> to <code>6</code> switch tabs, <code>s</code> opens
          this dialog, <code>p</code> pauses or starts the backup, <code>Esc</code> closes.</p>
+      <div class="frow" style="margin-top:14px"><label>Status panel</label></div>
+      <p class="fhint">Start from one of these, then tick or untick anything.</p>
+      <div class="frow" style="gap:6px">
+        <button class="preset" data-preset="minimal" type="button">Minimal</button>
+        <button class="preset" data-preset="normal" type="button">Normal</button>
+        <button class="preset" data-preset="everything" type="button">Everything</button>
+      </div>
+      <div id="stat-toggles"></div>
     </div>
     <div class="mpane" id="pane-about" role="tabpanel" hidden></div>
   </div>
@@ -2251,7 +2293,56 @@ function perVolumeHtml(vols){
   if(!vols || vols.length < 2) return '';
   return vols.map(function(v){
     return gaugeHtml(v.path, {used_str: v.used_str, total_str: v.total_str, pct: v.pct}, true,
-                     v.remaining_files != null ? v.remaining_files.toLocaleString() + ' files left' : '', '');
+                     v.remaining_files != null ? v.remaining_files.toLocaleString() + ' files left' : '', '', 2);
+  }).join('');
+}
+// Which readings the status panel shows. Kept per device like the theme, because
+// it is a choice about this screen rather than about the container: a phone
+// wants less than a desk.
+//
+// A preset is a starting point, not a mode: choosing one ticks its boxes and
+// leaves them free to change, so "something in between" needs no extra concept.
+var STAT_ITEMS = [
+  ['Now', [['state','State'],['rate','Upload rate'],['threads','Threads'],['chunks','Chunks a minute'],
+           ['rtt','Round-trip time'],['session','This session'],['scan','Scan progress']]],
+  ['Progress', [['backup','Backup total'],['drives','Per drive'],['remaining','Files remaining'],
+                ['first','First backup'],['since','Backing up since'],['composition','What it is made of']]],
+  ['Today', [['uploads','Uploads today'],['week','Last seven days'],['today','Today in one line'],
+             ['compression','Compression saved'],['clientest','Client estimate']]],
+  ['System', [['mem','Memory'],['swap','Swap']]]
+];
+var STAT_PRESETS = {
+  minimal: ['state','rate','backup'],
+  normal: ['state','rate','threads','rtt','session','scan','backup','remaining','first','uploads','today','mem','swap'],
+  everything: null      // null means every item there is
+};
+var STAT_ALL = STAT_ITEMS.reduce(function(a, g){ return a.concat(g[1].map(function(i){ return i[0]; })); }, []);
+var statHidden = {};
+try {
+  var raw = localStorage.getItem('bbMonitorHidden');
+  if(raw) JSON.parse(raw).forEach(function(k){ statHidden[k] = true; });
+} catch(e){}
+function shown(key){ return !statHidden[key]; }
+function saveHidden(){
+  try { localStorage.setItem('bbMonitorHidden', JSON.stringify(Object.keys(statHidden).filter(function(k){ return statHidden[k]; }))); } catch(e){}
+}
+function applyPreset(name){
+  var keep = STAT_PRESETS[name];
+  statHidden = {};
+  if(keep) STAT_ALL.forEach(function(k){ if(keep.indexOf(k) < 0) statHidden[k] = true; });
+  saveHidden();
+  buildStatToggles();
+  tick();
+}
+function buildStatToggles(){
+  var box = document.getElementById('stat-toggles');
+  if(!box) return;
+  box.innerHTML = STAT_ITEMS.map(function(g){
+    return '<div class="tgroup"><span class="tgroup-name">'+esc(g[0])+'</span>' +
+      g[1].map(function(i){
+        return '<label class="tog"><input type="checkbox" data-stat="'+esc(i[0])+'"'+
+               (shown(i[0]) ? ' checked' : '')+'> '+esc(i[1])+'</label>';
+      }).join('') + '</div>';
   }).join('');
 }
 function pctClass(pct, invert){
@@ -2305,7 +2396,9 @@ function pingHtml(d){
   return '<span class="stat"'+tip+'>RTT: <span class="'+cls+'">' +
          Math.round(d.latency_ms) + 'ms</span></span>';
 }
-function gaugeHtml(label, g, highIsGood, extra, suffix){
+// dp: a percentage rendered from the number's own string form loses a trailing
+// zero, so 23.40 prints as "23.4" and the figure changes width as it moves.
+function gaugeHtml(label, g, highIsGood, extra, suffix, dp){
   if(!g) return '<span class="stat">'+label+': n/a</span>';
   var cls = highIsGood
     ? (g.pct>=67 ? '' : (g.pct>=34 ? 'warn' : 'bad'))
@@ -2313,7 +2406,8 @@ function gaugeHtml(label, g, highIsGood, extra, suffix){
   var tip = extra ? ' title="'+extra+'"' : '';
   var suf = suffix ? ' <span class="dim">'+suffix+'</span>' : '';
   return '<span class="stat gauge '+cls+'"'+tip+'>'+label+': '+esc(g.used_str)+'/'+esc(g.total_str)+
-         ' <span class="track"><span class="fill" style="width:'+Math.min(100,g.pct)+'%"></span></span> '+g.pct+'%'+suf+'</span>';
+         ' <span class="track"><span class="fill" style="width:'+Math.min(100,g.pct)+'%"></span></span> '+
+         g.pct.toFixed(dp == null ? 1 : dp)+'%'+suf+'</span>';
 }
 // The week of daily upload counts as a bar strip beside today's figure, scaled
 // to the busiest day so the shape of the week reads the same whether the client
@@ -2620,56 +2714,70 @@ async function tick(){
 
     var rateCls = d.rate_mb>=1 ? 'good' : (d.rate_mb>0.05 ? 'warn' : 'bad');
     var stateCls = d.state==='Transmitting' ? 'good' : (['Scanning','Preparing'].includes(d.state) ? 'warn' : '');
+    // Each entry is [key, html]. The key is what the settings dialog switches
+    // off, so a row that ends up empty is dropped rather than left as a label
+    // with nothing after it.
+    var rows = [
+      ['Now', [
+        ['state', stateHtml(d)],
+        ['rate', '<span class="stat" title="'+esc(rateTitle(d))+'">Up: <span class="'+rateCls+'">'+d.rate_str+'</span> ('+d.rate_mbit_str+')'+sparklineSvg(rateHistory,70,16)+'</span>'],
+        ['threads', '<span class="stat">Threads: '+d.threads+'</span>'],
+        ['chunks', '<span class="stat">Chunks/60s: '+d.chunks+'</span>'],
+        ['rtt', pingHtml(d)],
+        ['session', '<span class="stat">Session: '+d.session_str+'</span>'],
+        ['scan', d.scan ? '<span class="stat">Scanning: '+d.scan.dirs+' dirs \u2022 ' +
+                  esc((d.scan.files||0).toLocaleString())+' files' +
+                  (d.scan.size_str ? ' \u2022 '+esc(d.scan.size_str) : '') + '</span>' : '']
+      ]],
+      ['Progress', [
+        ['backup', gaugeHtml('Backup', d.backup, true,
+                  d.backup ? (d.backup.files + ' \u2022 ETA based on last ' + d.backup.eta_samples + ' completed transfer' + (d.backup.eta_samples===1?'':'s') +
+                              (d.session_str ? ' \u2022 ' + d.session_str + ' this session' : '')) : '',
+                  d.backup ? ('ETA '+esc(d.backup.eta) +
+                              (d.backup.eta_date ? ' \u2022 '+esc(d.backup.eta_date) : '') +
+                              etaTrendHtml(d.eta_trend)) : '', 2)],
+        ['drives', perVolumeHtml(d.per_volume)],
+        ['remaining', '<span class="stat"'+(d.remaining_shape ? ' title="What is left averages '+esc(d.remaining_shape.avg_remaining_str)+' a file, against '+esc(d.remaining_shape.avg_done_str)+' for what has already gone. A remainder made of large files takes far longer than its count suggests."' : '')+'>Files Remaining: '+
+          (d.backup && d.backup.remaining_files!=null ? d.backup.remaining_files.toLocaleString() : 'n/a') +
+          (d.remaining_shape ? ' <span class="dim">(avg '+esc(d.remaining_shape.avg_remaining_str)+')</span>' : '')+'</span>'],
+        ['first', d.first_backup ? '<span class="stat" title="A first upload works through the whole ' +
+                  'set once. Until it catches up, gaps between completed passes are expected.">' +
+                  'First backup: day '+d.first_backup.days+' \u2022 '+d.first_backup.pct.toFixed(2)+'%</span>' : ''],
+        ['since', fmtDay(d.backing_up_since) ? '<span class="stat dim" title="When this backup ' +
+                  'began, from the date the client recorded at install.">Backing up since: ' +
+                  esc(fmtDay(d.backing_up_since)) + '</span>' : ''],
+        ['composition', compositionHtml(d.composition)]
+      ]],
+      ['Today', [
+        ['uploads', d.upload_success ? '<span class="stat" title="Uploads the client recorded for ' +
+                  'the most recent day. Retries are attempts a busy storage vault turned ' +
+                  'away; the client tried another and the file still went up. Not lost ' +
+                  'files: for those, watch skipped files.">Uploads: ' +
+                  d.upload_success[0].toLocaleString() +
+                  (d.upload_success[1] ? ' <span class="dim">('+d.upload_success[1]+' retried)</span>' : '') +
+                  '</span>' : ''],
+        ['week', uploadStripHtml(d.upload_history)],
+        ['today', todayHtml(d)],
+        ['compression', d.compress_saved ? '<span class="stat dim">Compression saved: '+esc(d.compress_saved)+'</span>' : ''],
+        ['clientest', d.perf ? '<span class="stat dim" title="Measured by the Backblaze client itself. ' +
+                  'Small files are slower because each costs a round trip.">Client est: ' +
+                  (d.perf.large_kbit/1000).toFixed(1)+' Mbit/s</span>' : '']
+      ]],
+      ['System', [
+        ['mem', gaugeHtml('Mem', d.mem, false,
+                  d.memory_by_process && d.memory_by_process.length
+                    ? 'Largest: ' + esc(d.memory_by_process[0].name) : '')],
+        ['swap', gaugeHtml('Swap', d.swap, false)]
+      ]]
+    ];
     var grid = document.getElementById('status-grid');
-    grid.innerHTML =
-      '<span class="stat">Threads: '+d.threads+'</span>' +
-      '<span class="stat" title="'+esc(rateTitle(d))+'">Up: <span class="'+rateCls+'">'+d.rate_str+'</span> ('+d.rate_mbit_str+')'+sparklineSvg(rateHistory,70,16)+'</span>' +
-      '<span class="stat">Chunks/60s: '+d.chunks+'</span>' +
-      '<span class="stat">Session: '+d.session_str+'</span>' +
-      stateHtml(d) +
-      pingHtml(d) +
-      (d.scan ? '<span class="stat">Scanning: '+d.scan.dirs+' dirs \u2022 ' +
-                esc((d.scan.files||0).toLocaleString())+' files' +
-                (d.scan.size_str ? ' \u2022 '+esc(d.scan.size_str) : '') + '</span>' : '') +
-      (d.first_backup ? '<span class="stat" title="A first upload works through the whole ' +
-                'set once. Until it catches up, gaps between completed passes are expected.">' +
-                'First backup: day '+d.first_backup.days+' \u2022 '+d.first_backup.pct+'%</span>' : '') +
-      (d.upload_success ? '<span class="stat" title="Uploads the client recorded for ' +
-                'the most recent day. Retries are attempts a busy storage vault turned ' +
-                'away; the client tried another and the file still went up. Not lost ' +
-                'files: for those, watch skipped files.">Uploads: ' +
-                d.upload_success[0].toLocaleString() +
-                (d.upload_success[1] ? ' <span class="dim">('+d.upload_success[1]+' retried)</span>' : '') +
-                '</span>' : '') +
-      uploadStripHtml(d.upload_history) +
-      todayHtml(d) +
-      (d.compress_saved ? '<span class="stat dim">Compression saved: '+esc(d.compress_saved)+'</span>' : '') +
-      (d.perf ? '<span class="stat dim" title="Measured by the Backblaze client itself. ' +
-                'Small files are slower because each costs a round trip.">Client est: ' +
-                (d.perf.large_kbit/1000).toFixed(1)+' Mbit/s</span>' : '') +
-      gaugeHtml('Mem', d.mem, false,
-                d.memory_by_process && d.memory_by_process.length
-                  ? 'Largest: ' + esc(d.memory_by_process[0].name) : '') +
-      gaugeHtml('Swap', d.swap, false) +
-      '<span class="stat"'+(d.remaining_shape ? ' title="What is left averages '+esc(d.remaining_shape.avg_remaining_str)+' a file, against '+esc(d.remaining_shape.avg_done_str)+' for what has already gone. A remainder made of large files takes far longer than its count suggests."' : '')+'>Files Remaining: '+
-        (d.backup && d.backup.remaining_files!=null ? d.backup.remaining_files.toLocaleString() : 'n/a') +
-        (d.remaining_shape ? ' <span class="dim">(avg '+esc(d.remaining_shape.avg_remaining_str)+')</span>' : '')+'</span>' +
-      // What is left, then what the whole thing is made of, then how long it has
-      // been running: the three sit together because they answer one question.
-      compositionHtml(d.composition) +
-      (fmtDay(d.backing_up_since) ? '<span class="stat dim" title="When this backup ' +
-                'began, from the date the client recorded at install.">Backing up since: ' +
-                esc(fmtDay(d.backing_up_since)) + '</span>' : '') +
-      gaugeHtml('Backup', d.backup, true,
-                // The client rewrites this figure as it goes, so it is live, but
-                // it counts the whole backup and this session's share of it is
-                // the part that moves while you watch.
-                d.backup ? (d.backup.files + ' \u2022 ETA based on last ' + d.backup.eta_samples + ' completed transfer' + (d.backup.eta_samples===1?'':'s') +
-                            (d.session_str ? ' \u2022 ' + d.session_str + ' this session' : '')) : '',
-                d.backup ? ('ETA '+esc(d.backup.eta) +
-                            (d.backup.eta_date ? ' \u2022 '+esc(d.backup.eta_date) : '') +
-                            etaTrendHtml(d.eta_trend)) : '') +
-      perVolumeHtml(d.per_volume);
+    grid.innerHTML = rows.map(function(row){
+      var items = row[1].filter(function(it){ return it[1] && shown(it[0]); })
+                        .map(function(it){ return it[1]; }).join('');
+      if(!items) return '';
+      return '<div class="srow"><span class="srow-label">'+row[0]+'</span>' +
+             '<span class="srow-items">'+items+'</span></div>';
+    }).join('');
 
     var up = document.getElementById('uploading');
     document.getElementById('uploading-title').textContent = d.files.length
@@ -2804,6 +2912,31 @@ async function tick(){
       window.parent.postMessage({bb64: 'tab', n: Number(e.key)}, location.origin);
     }
   });
+  buildStatToggles();
+  document.getElementById('stat-toggles').addEventListener('change', function(e){
+    var k = e.target.getAttribute && e.target.getAttribute('data-stat');
+    if(!k) return;
+    if(e.target.checked) delete statHidden[k]; else statHidden[k] = true;
+    saveHidden();
+    tick();
+  });
+  [].slice.call(document.querySelectorAll('button.preset')).forEach(function(b){
+    b.addEventListener('click', function(){ applyPreset(b.getAttribute('data-preset')); });
+  });
+  // Opened from the Settings tab, or from a link carrying ?settings=status.
+  function openStatusSettings(){
+    if(backdrop.hidden) document.getElementById('settings-btn').click();
+    setTab('prefs');
+    var box = document.getElementById('stat-toggles');
+    if(box && box.scrollIntoView) try { box.scrollIntoView({block: 'nearest'}); } catch(e){}
+  }
+  window.addEventListener('message', function(e){
+    if(e.origin !== location.origin) return;
+    if(e.data && e.data.bb64 === 'open-settings' && e.data.section === 'status') openStatusSettings();
+  });
+  try {
+    if(new URLSearchParams(location.search).get('settings') === 'status') openStatusSettings();
+  } catch(e){}
   document.getElementById('copy-summary').addEventListener('click', function(){
     var btn = this;
     fetch('manage/summary', {cache:'no-store'}).then(function(r){ return r.text(); }).then(function(txt){
