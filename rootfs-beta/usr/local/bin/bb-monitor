@@ -104,6 +104,42 @@ def save_pref(key, value):
     except OSError:
         pass
 
+# Which readings the status panel shows. The web dashboard offers the same
+# choice; each keeps its own, because one is a browser on a phone and the other
+# is a terminal, and they are rarely the same width.
+STAT_ITEMS = [
+    ("Now", [("state", "State"), ("rate", "Upload rate"), ("threads", "Threads"),
+             ("chunks", "Chunks a minute"), ("rtt", "Round-trip time"),
+             ("session", "This session"), ("scan", "Scan progress")]),
+    ("Progress", [("backup", "Backup total"), ("drives", "Per drive"),
+                  ("remaining", "Files remaining"), ("first", "First backup"),
+                  ("composition", "What it is made of")]),
+    ("Today", [("uploads", "Uploads today"), ("week", "Last seven days"),
+               ("compression", "Compression saved"), ("clientest", "Client estimate")]),
+    ("System", [("mem", "Memory"), ("swap", "Swap"), ("uptime", "Uptime"),
+                ("server", "Upload server")]),
+]
+STAT_ALL = [k for _, items in STAT_ITEMS for k, _ in items]
+# A preset is a starting point rather than a mode: it sets the boxes and leaves
+# them free to change, so anything in between needs no further concept.
+STAT_PRESETS = {
+    "Minimal": ["state", "rate", "backup"],
+    "Normal": ["state", "rate", "threads", "rtt", "session", "scan", "backup",
+               "remaining", "first", "uploads", "mem", "swap", "uptime"],
+    "Everything": None,
+}
+PRESET_NAMES = ["Minimal", "Normal", "Everything"]
+
+
+def load_hidden():
+    raw = load_pref("hidden", "")
+    return {k for k in (x.strip() for x in raw.split(",")) if k in STAT_ALL}
+
+
+def save_hidden(hidden):
+    save_pref("hidden", ",".join(sorted(hidden)))
+
+
 def apply_theme(scr, name):
     """Re-point the colour pairs. curses allows pairs to be redefined at runtime,
     so a theme change repaints on the next draw with no restart."""
@@ -202,6 +238,7 @@ def draw(scr,d,st):
     _backing_up_since=d.get("backing_up_since")   # for the About tab; see _about_lines()
     h,w=scr.getmaxyx(); scr.erase()
     NORM=curses.color_pair(1); HI=curses.color_pair(2)|curses.A_BOLD
+    DIMLBL=curses.color_pair(1)|curses.A_DIM
     BORD=curses.color_pair(6)|curses.A_BOLD; TIT=curses.color_pair(2)|curses.A_BOLD
     GOOD=curses.color_pair(4)|curses.A_BOLD; WARN=curses.color_pair(3)|curses.A_BOLD; BAD=curses.color_pair(5)|curses.A_BOLD
     # Warnings ride in the title bar, where they cannot be scrolled past.
@@ -242,29 +279,39 @@ def draw(scr,d,st):
             aw(scr,y,x+len(pre)+12,suf,(GOOD,WARN,BAD)[sev])
             if note2: aw(scr,y,x+len(pre)+12+len(suf),note2,NORM)
         return {"w":len(pre)+12+len(suf)+len(note2),"draw":dr}
-    chunks=[
-        txt([("Threads: ",NORM),("%d"%d["threads"],NORM)]),
-        txt([("Up: ",NORM),("%.2f MB/s"%r,rcol),(" (~%d Mbit/s) "%(r*8),NORM),
-              (spark(_rate_hist,14),GOOD)]),
-        txt([("Chunks/60s: ",NORM),("%d"%d["chunks"],NORM)]),
-        txt([("Session: ",NORM),(human(d["sess"]),NORM)]),
-        txt([("State: ",NORM),(stt,scol)]+([(pl_txt,NORM)] if pl_txt else [])),
-        # The note names the largest user of memory. "The container uses 8 GB"
-        # starts a support thread. "bzfilelist uses 8 GB" answers it, because a
-        # first scan over a large set is when the client needs the most memory.
+    # Named rows rather than one long wrap: twenty readings in a single wrapped
+    # line read as a wall. Each item can be switched off from the settings
+    # dialog, and a row whose items are all off is dropped rather than drawn as
+    # a label with nothing after it.
+    hidden=st.get("hidden") or set()
+    rows=[("NOW",[]),("PROGRESS",[]),("TODAY",[]),("SYSTEM",[])]
+    _slot={n:items for n,items in rows}
+    def add(group,key,chunk):
+        if key not in hidden: _slot[group].append(chunk)
+    add("NOW","state",txt([("State: ",NORM),(stt,scol)]+([(pl_txt,NORM)] if pl_txt else [])))
+    add("NOW","rate",txt([("Up: ",NORM),("%.2f MB/s"%r,rcol),(" (~%d Mbit/s) "%(r*8),NORM),
+                          (spark(_rate_hist,14),GOOD)]))
+    add("NOW","threads",txt([("Threads: ",NORM),("%d"%d["threads"],NORM)]))
+    add("NOW","chunks",txt([("Chunks/60s: ",NORM),("%d"%d["chunks"],NORM)]))
+    add("NOW","session",txt([("Session: ",NORM),(human(d["sess"]),NORM)]))
+    # The note names the largest user of memory. "The container uses 8 GB"
+    # starts a support thread. "bzfilelist uses 8 GB" answers it, because a
+    # first scan over a large set is when the client needs the most memory.
+    add("SYSTEM","mem",
         gauge("Mem:",human(d["mem"][0]),human(d["mem"][1]),d["mem"][2],
               note=("(%s)"%(d.get("memory_by_process") or [{"name":""}])[0]["name"]
                     if d.get("memory_by_process") else "")) if d["mem"]
-            else txt([("Mem: n/a",NORM)]),
-        gauge("Swap:",human(d["swap"][0]),human(d["swap"][1]),d["swap"][2]) if d["swap"] else txt([("Swap: off",NORM)]),
-    ]
+            else txt([("Mem: n/a",NORM)]))
+    add("SYSTEM","swap",
+        gauge("Swap:",human(d["swap"][0]),human(d["swap"][1]),d["swap"][2]) if d["swap"]
+            else txt([("Swap: off",NORM)]))
     # Everything below reached the web dashboard first. Both read the same
     # bbdata.gather(), so they stay in step from here.
     rtt_ms,rtt_peer,_=_upload_rtt()
-    if rtt_ms is None: chunks.append(txt([("RTT: n/a",NORM)]))
+    if rtt_ms is None: add("NOW","rtt",txt([("RTT: n/a",NORM)]))
     else:
         rc=GOOD if rtt_ms<80 else (WARN if rtt_ms<200 else BAD)
-        chunks.append(txt([("RTT: ",NORM),("%dms"%round(rtt_ms),rc)]))
+        add("NOW","rtt",txt([("RTT: ",NORM),("%dms"%round(rtt_ms),rc)]))
     b=d.get("backup")
     if b:
         fr=b.get("remaining_files")
@@ -274,7 +321,7 @@ def draw(scr,d,st):
             # container what remained averaged 602 MB against 8 MB for what had
             # already gone, which is why 96% of the files was 23% of the bytes.
             rs=d.get("remaining_shape")
-            chunks.append(txt([("Files Remaining: ",NORM),("{:,}".format(fr),NORM)]
+            add("PROGRESS","remaining",txt([("Files Remaining: ",NORM),("{:,}".format(fr),NORM)]
                               +([(" (avg %s)"%human(rs["avg_remaining"]),NORM)] if rs else [])))
         eta_secs=b.get("eta_seconds"); ed=eta_date(eta_secs)
         # eta_trend compares today's moving-average estimate with yesterday's. A
@@ -286,7 +333,7 @@ def draw(scr,d,st):
             tsecs=abs(trend["delta_seconds"])
             mag=("%dh"%round(tsecs/3600)) if tsecs<86400 else ("%dd"%round(tsecs/86400))
             trend_txt=", %s %s"%(mag,"better" if trend["direction"]=="improving" else "slower")
-        chunks.append(gauge("Backup:",human(b["done"],2),human(b["total"],2),b["pct"],dp=2,
+        add("PROGRESS","backup",gauge("Backup:",human(b["done"],2),human(b["total"],2),b["pct"],dp=2,
                              high_is_good=True,note="ETA "+eta_str(eta_secs),
                              note2=(" (%s%s)"%(ed,trend_txt) if ed else "")))
     # Per drive, and only with more than one: on a single-share container these
@@ -294,10 +341,10 @@ def draw(scr,d,st):
     pv=d.get("per_volume") or []
     if len(pv)>1:
         for v in pv:
-            chunks.append(gauge(v["path"]+":",human(v["done"],2),human(v["total"],2),v["pct"],
+            add("PROGRESS","drives",gauge(v["path"]+":",human(v["done"],2),human(v["total"],2),v["pct"],
                                  dp=2,high_is_good=True,
                                  note=("{:,} left".format(v["remaining_files"]) if v.get("remaining_files") is not None else "")))
-    chunks.append(txt([("Uptime: ",NORM),(uptime_str(),NORM)]))
+    add("SYSTEM","uptime",txt([("Uptime: ",NORM),(uptime_str(),NORM)]))
     # The web dashboard has this in its footer, which has the width for it. Here
     # the footer already carries the key hints and the build label, and a 29
     # character hostname does not fit alongside both below about 120 columns. The
@@ -305,12 +352,12 @@ def draw(scr,d,st):
     # an 80 column terminal instead of silently vanishing.
     sc=d.get("scan")
     if sc:
-        chunks.append(txt([("Scanning: ",NORM),
+        add("NOW","scan",txt([("Scanning: ",NORM),
                            ("%d/%d dirs"%(sc["dirs_done"],sc["dirs_total"]),GOOD)]))
         if sc.get("files") is not None:
-            chunks.append(txt([("Found: ",NORM),("{:,}".format(sc["files"]),NORM)]))
+            add("NOW","scan",txt([("Found: ",NORM),("{:,}".format(sc["files"]),NORM)]))
     fb=d.get("first_backup")
-    if fb: chunks.append(txt([("First backup: ",NORM),
+    if fb: add("PROGRESS","first",txt([("First backup: ",NORM),
                               ("day %d \u2022 %.1f%%"%(fb["days"],fb["pct"]),NORM)]))
     us=d.get("upload_success")
     if us:
@@ -318,7 +365,7 @@ def draw(scr,d,st):
         # Retried attempts against a busy vault, not failed files: routine, so
         # not painted as an alarm. See upload_success_today() in bbdata.
         if us[1]: parts.append((" (%d retried)"%us[1],NORM))
-        chunks.append(txt(parts))
+        add("TODAY","uploads",txt(parts))
     hist=d.get("upload_history")
     if hist and len(hist)>=2:
         # Reuses spark() rather than a new bar-builder: it already scales values
@@ -328,7 +375,7 @@ def draw(scr,d,st):
         # day's tally gaining a digit must not reflow every chunk to its right,
         # the way an earlier, variable-width sparkline once did (see spark()).
         wk=spark([h["success"] for h in hist],7)
-        chunks.append(txt([("Week: ",NORM),(wk,GOOD),
+        add("TODAY","week",txt([("Week: ",NORM),(wk,GOOD),
                            ("  %s/day"%("{:>9,}".format(hist[-1]["success"])),NORM)]))
     ycomp=d.get("composition")
     if ycomp:
@@ -339,21 +386,30 @@ def draw(scr,d,st):
         cats=ycomp["categories"]
         parts=" • ".join("%s %s"%(count_str(v),CATEGORY_LABELS.get(k,k))
                               for k,v in cats.items())
-        chunks.append(txt([("Yours: ",NORM),(parts,NORM)]))
+        add("PROGRESS","composition",txt([("Yours: ",NORM),(parts,NORM)]))
     cs=d.get("compress_saved")
-    if cs: chunks.append(txt([("Compression saved: ",NORM),(human(cs),NORM)]))
+    if cs: add("TODAY","compression",txt([("Compression saved: ",NORM),(human(cs),NORM)]))
     pf=d.get("perf")
-    if pf: chunks.append(txt([("Client est: ",NORM),
+    if pf: add("TODAY","clientest",txt([("Client est: ",NORM),
                               ("%.1f Mbit/s"%(pf["large_kbit"]/1000.0),NORM)]))
     pod=_upload_host()
-    if pod: chunks.append(txt([("Server: ",NORM),(pod,NORM)]))
-    SEP=3; inner=max(1,w-4); placements=[]; line=0; cx=0
-    for c in chunks:
-        if cx==0: placements.append((c,line,0)); cx=c["w"]
-        elif cx+SEP+c["w"]<=inner: placements.append((c,line,cx+SEP)); cx+=SEP+c["w"]
-        else: line+=1; placements.append((c,line,0)); cx=c["w"]
-    statusH=line+3
-    for c,ln,rx in placements: c["draw"](2+ln,2+rx)
+    if pod: add("SYSTEM","server",txt([("Server: ",NORM),(pod,NORM)]))
+    # A label column, then that row's items wrapped into whatever is left. The
+    # label repeats on a wrapped line only as blanks, so the eye keeps the column.
+    LBL=9; SEP=3; inner=max(1,w-4-LBL); placements=[]; line=0
+    labels=[]
+    for name,items in rows:
+        if not items: continue
+        labels.append((line,name))
+        cx=0
+        for c in items:
+            if cx==0: placements.append((c,line,0)); cx=c["w"]
+            elif cx+SEP+c["w"]<=inner: placements.append((c,line,cx+SEP)); cx+=SEP+c["w"]
+            else: line+=1; placements.append((c,line,0)); cx=c["w"]
+        line+=1
+    statusH=max(3,line+2)
+    for ln,name in labels: aw(scr,2+ln,2,name[:LBL-1],DIMLBL)
+    for c,ln,rx in placements: c["draw"](2+ln,2+LBL+rx)
     box(scr,1,0,statusH,w,"Status",BORD,TIT)
 
     # ---- regions below the (variable-height) Status box ----
@@ -521,7 +577,7 @@ def draw_overlay(scr, st):
         aw(scr, y, bx, " " * bw, NORM)
     box(scr, by, bx, bh, bw, "Settings", BORD, TIT)
 
-    tabs = ["Preferences", "About"]
+    tabs = ["Preferences", "Status panel", "About"]
     cx = bx + 2
     for i, t in enumerate(tabs):
         aw(scr, by + 1, cx, " %s " % t, HI if i == ui["tab"] else DIM)
@@ -575,6 +631,41 @@ def draw_overlay(scr, st):
             hint = ("Up/Down row \u2022 Enter "
                     + ("change theme" if sel == 0 else "toggle")
                     + " \u2022 Tab About \u2022 Esc close")
+    elif ui["tab"] == 1:
+        # One flat list: a preset row, then every reading under its group name.
+        # Flat because the selection has to move through it with two keys, and a
+        # nested list would need a third to leave a group.
+        rows = [("preset", None)]
+        for gname, items in STAT_ITEMS:
+            rows.append(("head", gname))
+            for key, label in items:
+                rows.append(("item", (key, label)))
+        avail = max(1, (by + bh - 3) - top)
+        sel = ui.get("srow", 0) % len(rows)
+        # Keep the selected line on screen without jumping the list about: only
+        # scroll when the selection would leave the window.
+        off = ui.get("stop", 0)
+        if sel < off: off = sel
+        elif sel >= off + avail: off = sel - avail + 1
+        off = max(0, min(off, max(0, len(rows) - avail)))
+        ui["stop"] = off
+        hidden = st.get("hidden") or set()
+        for i, (kind, val) in enumerate(rows[off:off + avail]):
+            y = top + i
+            on = (i + off) == sel
+            if kind == "preset":
+                aw(scr, y, bx + 2, "Start from:", NORM | (curses.A_BOLD if on else 0))
+                cxp = bx + 14
+                for nme in PRESET_NAMES:
+                    aw(scr, y, cxp, " %s " % nme, HI if on and ui.get("preset", 0) == PRESET_NAMES.index(nme) else DIM)
+                    cxp += len(nme) + 3
+            elif kind == "head":
+                aw(scr, y, bx + 2, val.upper(), DIM | curses.A_BOLD)
+            else:
+                key, label = val
+                aw(scr, y, bx + 4, "[%s] %s" % (" " if key in hidden else "x", label),
+                   HI if on else NORM)
+        hint = "Up/Down move \u2022 Left/Right preset \u2022 Enter toggle or apply \u2022 Tab About \u2022 Esc close"
     else:
         y = top
         for text, bold in _about_lines():
@@ -611,9 +702,45 @@ def overlay_key(scr, st, ch):
         apply_theme(scr, names[ui["picker"]])
         return True
     if ch == ord('\t'):
-        ui["tab"] = (ui["tab"] + 1) % 2
+        ui["tab"] = (ui["tab"] + 1) % 3
     elif ch == curses.KEY_BTAB:
-        ui["tab"] = (ui["tab"] - 1) % 2
+        ui["tab"] = (ui["tab"] - 1) % 3
+    elif ui["tab"] == 1:
+        # The same row list the drawing builds, rebuilt here so the two agree
+        # about what the selection means.
+        rows = [("preset", None)]
+        for gname, items in STAT_ITEMS:
+            rows.append(("head", gname))
+            for key, label in items:
+                rows.append(("item", (key, label)))
+        n = len(rows)
+        sel = ui.get("srow", 0) % n
+        if ch in (curses.KEY_UP, ord('k')):
+            # Step over the group headings: they are labels, not choices.
+            for _ in range(n):
+                sel = (sel - 1) % n
+                if rows[sel][0] != "head":
+                    break
+        elif ch in (curses.KEY_DOWN, ord('j')):
+            for _ in range(n):
+                sel = (sel + 1) % n
+                if rows[sel][0] != "head":
+                    break
+        elif ch in (curses.KEY_LEFT, ord('h')) and rows[sel][0] == "preset":
+            ui["preset"] = (ui.get("preset", 0) - 1) % len(PRESET_NAMES)
+        elif ch in (curses.KEY_RIGHT, ord('l')) and rows[sel][0] == "preset":
+            ui["preset"] = (ui.get("preset", 0) + 1) % len(PRESET_NAMES)
+        elif ch in (curses.KEY_ENTER, 10, 13):
+            hidden = set(st.get("hidden") or set())
+            if rows[sel][0] == "preset":
+                keep = STAT_PRESETS[PRESET_NAMES[ui.get("preset", 0)]]
+                hidden = set() if keep is None else {k for k in STAT_ALL if k not in keep}
+            else:
+                key = rows[sel][1][0]
+                hidden.discard(key) if key in hidden else hidden.add(key)
+            st["hidden"] = hidden
+            save_hidden(hidden)
+        ui["srow"] = sel
     elif ch in (curses.KEY_UP, ord('k')) and ui["tab"] == 0:
         ui["row"] = (ui.get("row", 0) - 1) % 2
     elif ch in (curses.KEY_DOWN, ord('j')) and ui["tab"] == 0:
@@ -637,7 +764,7 @@ def main(scr):
     apply_theme(scr,theme)
     scr.keypad(True); scr.timeout(50)
     cells=load_pref("compact_parts","0")=="1"
-    st={"soff":0,"cap":1,"ui":None,"cells":cells}; prev=None; d=None; last=0
+    st={"soff":0,"cap":1,"ui":None,"cells":cells,"hidden":load_hidden()}; prev=None; d=None; last=0
     while True:
         ch=scr.getch()
         if st["ui"] is not None:
@@ -651,7 +778,7 @@ def main(scr):
             if ch in (ord('q'),ord('Q')): break
             elif ch in (ord('s'),ord('S')):
                 st["ui"]={"tab":0,"row":0,"picker":None,"theme":theme,
-                          "cells":st.get("cells",False)}
+                          "cells":st.get("cells",False),"srow":0,"stop":0}
             elif ch in (curses.KEY_UP,ord('k')): st["soff"]-=1
             elif ch in (curses.KEY_DOWN,ord('j')): st["soff"]+=1
             elif ch==curses.KEY_PPAGE: st["soff"]-=st["cap"]
