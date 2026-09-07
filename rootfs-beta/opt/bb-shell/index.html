@@ -207,6 +207,16 @@
     if(e.origin !== location.origin) return;
     var m = e.data;
     if(m && m.bb64 === 'tab' && m.n >= 1 && m.n <= 6) show(ORDER[m.n - 1]);
+    // The Settings tab asks for the Monitor's own settings. Show the Monitor,
+    // then tell its frame; on the first visit the frame is still loading, so
+    // the message waits for it rather than arriving at an empty document.
+    if(m && m.bb64 === 'monitor-settings'){
+      var wasLoaded = loaded.monitor;
+      show('monitor');
+      var send = function(){ try { panes.monitor.contentWindow.postMessage(
+        {bb64: 'open-settings', section: 'status'}, location.origin); } catch(e){} };
+      if(wasLoaded) send(); else panes.monitor.addEventListener('load', send, {once: true});
+    }
   });
 
   // The tab title carries the state, because the browser tab is the one part of
