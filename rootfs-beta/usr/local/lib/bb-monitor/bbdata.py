@@ -843,16 +843,23 @@ def read(path):
         return ""
 
 
-def human(n):
+def human(n, dp=1):
     # Runs to PB. Stopping at GB meant a 250 TB backup rendered as
     # "257524.9 GB", eleven characters that overflowed the gauge label and got
     # clipped. Reported by gandalf15.
+    #
+    # dp is for the one figure that needs it: the backup total. At one decimal
+    # place a TB reading only moves every 102.4 GB, which on a large backup is
+    # most of a day, so a correct figure sat unchanged long enough to be
+    # reported as a stuck counter. Everything else keeps one place, because a
+    # file size in the completed table gains nothing from a second and the
+    # gauge label above has a width to respect.
     if n >= 1125899906842624:
-        return "%.1f PB" % (n / 1125899906842624)
+        return "%.*f PB" % (dp, n / 1125899906842624)
     if n >= 1099511627776:
-        return "%.1f TB" % (n / 1099511627776)
+        return "%.*f TB" % (dp, n / 1099511627776)
     if n >= 1073741824:
-        return "%.1f GB" % (n / 1073741824)
+        return "%.*f GB" % (dp, n / 1073741824)
     if n >= 1048576:
         return "%.0f MB" % (n / 1048576)
     return "%d KB" % (n / 1024)
@@ -1404,6 +1411,17 @@ def gather(prev):
         o["state"] = "Pausing" if draining else "Paused"
     else:
         o["pause"]["draining"] = False
+        # A restart re-checks the small files between the client's checkpoint and
+        # where it had got to. The client names each one, the datacenter answers
+        # that it already holds it, and nothing is sent: threads sit at zero
+        # while the state reads Transmitting, which looks like a stall and was
+        # reported as one. Named for what it is instead.
+        if not threads and o["state"] in ("Transmitting", "Uploading"):
+            small = [r for r in _recent[-6:] if r.get("small")]
+            if small and all(r.get("dedup") for r in small):
+                o["state"] = "Checking"
+    o["per_volume"] = per_volume()
+    o["remaining_shape"] = remaining_shape()
     o["perf"] = measured_perf()
     o["health"] = health()
     o["upload_success"] = upload_success_today()
@@ -1604,3 +1622,109 @@ def progress_history(record=True):
     if not hist:
         return None
     return [{"day": d, "pct": hist[d]} for d in sorted(hist)]
+
+
+# ---- per-drive progress ----------------------------------------------------------
+# The two stat files carry a bzvolume element per drive alongside the totals, and
+# nothing read them until now. On a single-share container this repeats the total;
+# on a container backing up several shares it answers which drive is holding the
+# backup up, which the totals cannot.
+def per_volume():
+    """[{guid, path, total, done, remaining, pct, remaining_files}] or None."""
+    def by_guid(text, *attrs):
+        out = {}
+        for a in re.findall(r'<bzvolume ([^/]*)/>', text):
+            g = re.search(r'bzVolumeGuid="([^"]*)"', a)
+            if not g:
+                continue
+            vals = []
+            for name in attrs:
+                m = re.search(name + r'="(\d+)"', a)
+                vals.append(int(m.group(1)) if m else None)
+            out[g.group(1)] = vals
+        return out
+
+    sel = by_guid(read(BZSTAT_TOTAL), "pervol_sel_for_backup_numbytes",
+                  "pervol_sel_for_backup_numfiles")
+    rem = by_guid(read(BZSTAT_REMAIN), "pervol_remaining_files_numbytes",
+                  "pervol_remaining_files_numfiles")
+    if not sel:
+        return None
+    # The mount path lives in a third file, keyed by the same guid when it
+    # carries one. Where it does not, the drive is named by the head of its guid
+    # rather than left blank: an unlabelled bar is worse than a short label, and
+    # the head is the part that differs. Two guids on a live container shared
+    # their last six characters and differed by the fourth.
+    paths = {}
+    for a in re.findall(r'<bzvolume ([^/]*)/>', read(BZ + "/bzvolumes.xml")):
+        g = re.search(r'bzVolumeGuid="([^"]*)"', a)
+        mp = re.search(r'mountPointPathHex="([0-9a-f]*)"', a)
+        if g and mp:
+            try:
+                paths[g.group(1)] = bytes.fromhex(mp.group(1)).decode("utf-8", "replace")
+            except ValueError:
+                pass
+    out = []
+    for guid, (total, tfiles) in sel.items():
+        if not total:
+            continue
+        rbytes, rfiles = rem.get(guid, (0, 0))
+        rbytes = min(rbytes or 0, total)
+        done = max(0, total - rbytes)
+        out.append({"guid": guid, "path": paths.get(guid) or (guid[:10] + "\u2026"),
+                    "total": total, "done": done, "remaining": rbytes,
+                    "pct": done / total * 100.0,
+                    "total_files": tfiles, "remaining_files": rfiles})
+    out.sort(key=lambda v: v["total"], reverse=True)
+    return out or None
+
+
+# ---- what is left, against what has gone --------------------------------------
+# The client gives no size breakdown of the files still to send, so a histogram
+# is not available. The average size of what remains against the average of what
+# has gone is available, and it is the figure that explains a long ETA: a
+# remainder made of large files takes far longer than its file count suggests.
+def remaining_shape():
+    """{avg_remaining, avg_done, ratio} in bytes, or None."""
+    b = backup_totals()
+    if not b or not b.get("total_files") or b.get("remaining_files") is None:
+        return None
+    rem_files = b["remaining_files"]
+    done_files = (b["total_files"] or 0) - rem_files
+    if rem_files <= 0 or done_files <= 0 or not b.get("done"):
+        return None
+    avg_rem = (b["total"] - b["done"]) / rem_files
+    avg_done = b["done"] / done_files
+    return {"avg_remaining": avg_rem, "avg_done": avg_done,
+            "ratio": (avg_rem / avg_done) if avg_done else None}
+
+
+# ---- what limits the rate -------------------------------------------------------
+# Wine answers SIO_IDEAL_SEND_BACKLOG_QUERY with a fixed 64 KB and the client
+# sizes its send buffer from it, so a connection can have only that much in
+# flight and its rate is bounded by buffer divided by round trip. That is the
+# finding behind the Wine patches this beta carries, and it is the number nobody
+# outside this container knows to look for.
+#
+# Reported rather than turned into advice. On a live container the observed rate
+# has been seen above what this predicts, so the model is a floor of unknown
+# tightness, not a ceiling to tune against. Saying which it is beats a
+# confident figure that is wrong.
+WINE_SNDBUF = 65536
+
+
+def rate_limits(rate_bytes_per_sec, threads, rtt_ms):
+    """{per_thread, modelled, observed, verdict} in bytes/sec, or None."""
+    if not rtt_ms or rtt_ms <= 0 or not threads:
+        return None
+    per_thread = WINE_SNDBUF / (rtt_ms / 1000.0)
+    modelled = per_thread * threads
+    observed = rate_bytes_per_sec or 0
+    if observed > modelled * 1.1:
+        verdict = "above"      # more in flight than the stub value implies
+    elif observed >= modelled * 0.8:
+        verdict = "at"         # the send buffer and the thread count are the limit
+    else:
+        verdict = "below"      # something else is the limit
+    return {"per_thread": per_thread, "modelled": modelled,
+            "observed": observed, "verdict": verdict}

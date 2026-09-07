@@ -115,8 +115,12 @@ def snapshot_to_json(d):
         "mem": {"used_str": human(mem[0]), "total_str": human(mem[1]), "pct": round(mem[2], 1)} if mem else None,
         "memory_by_process": d.get("memory_by_process"),
         "swap": {"used_str": human(swap[0]), "total_str": human(swap[1]), "pct": round(swap[2], 1)} if swap else None,
-        "backup": ({"used_str": human(d["backup"]["done"]), "total_str": human(d["backup"]["total"]),
-                     "pct": round(d["backup"]["pct"], 1),
+        # Two places on this one gauge: see human(). The percent moves about
+        # 0.005 points every quarter of an hour on a large backup, so one place
+        # there is as still as the byte figure was.
+        "backup": ({"used_str": human(d["backup"]["done"], 2),
+                     "total_str": human(d["backup"]["total"], 2),
+                     "pct": round(d["backup"]["pct"], 2),
                      "files": ("%d/%d files" % (d["backup"]["done_files"], d["backup"]["total_files"]))
                                if d["backup"]["done_files"] is not None else "",
                      "eta": eta_str(d["backup"].get("eta_seconds")),
@@ -173,14 +177,28 @@ def snapshot_to_json(d):
         "milestones": d.get("milestones"),
         "progress_history": d.get("progress_history"),
         "compress_saved": human(d["compress_saved"]) if d.get("compress_saved") else None,
+        # Which drive is holding the backup up, and how big what is left is
+        # against what has gone. Both come from files already read.
+        "per_volume": ([{"path": v["path"], "pct": round(v["pct"], 2),
+                          "used_str": human(v["done"], 2), "total_str": human(v["total"], 2),
+                          "remaining_files": v["remaining_files"]}
+                         for v in d["per_volume"]] if d.get("per_volume") else None),
+        "remaining_shape": ({"avg_remaining_str": human(d["remaining_shape"]["avg_remaining"]),
+                              "avg_done_str": human(d["remaining_shape"]["avg_done"]),
+                              "ratio": round(d["remaining_shape"]["ratio"], 1)}
+                             if d.get("remaining_shape") and d["remaining_shape"].get("ratio") else None),
+        "rate_limits": bbdata.rate_limits(int(d.get("rate", 0) * 1048576),
+                                          d.get("threads"), lat_ms),
         "skipped": d.get("skipped"),
         # The skipped files themselves, not just the counts. The Skipped Files
         # page needs the names to be useful at all, and it reads them from the
         # cached snapshot rather than calling gather() itself, so the raw list
         # has to travel in the snapshot the collector thread already builds.
         "skipped_list": d.get("skipped_list"),
+        # Two places for the same reason the backup gauge has them: this is the
+        # same percentage, and at one place it sat as still.
         "first_backup": ({"days": round(d["first_backup"]["days"]),
-                           "pct": round(d["first_backup"]["pct"], 1)}
+                           "pct": round(d["first_backup"]["pct"], 2)}
                           if d.get("first_backup") else None),
         "last_backup_days": (round(d["last_backup_days"], 1)
                              if d.get("last_backup_days") is not None else None),
@@ -280,18 +298,20 @@ THEME_CSS = """  :root{
     --good:#39ff14; --warn:#ffe700; --bad:#ff2ec4;
     --track-bg:#08011a; --track-border:#3d1b5c; --scanline:1;
   }
-"""
-
-# What the three plain pages add to the palettes: a dim text colour mixed from
-# the theme, the page background carried onto html so a centred body sits on
-# its own colour, and the same 1100px measure the Monitor uses. Prose caps are
-# lifted to 100ch inside that, so text uses the width of a desktop window
-# and still wraps at a readable line on a very wide one.
-PAGE_CSS = """  :root{ --dim:#7f9fc8; }
+  /* Derived from whichever palette is in force rather than kept as a fourteenth
+     value in each. It lives here, with the palettes, because every page uses it:
+     defined only for the plain pages, the Monitor's progress chart had no value
+     to resolve and its labels fell back to the SVG default, which is black. */
+  :root{ --dim:#7f9fc8; }
   @supports (color: color-mix(in srgb, red, blue)){
     :root{ --dim:color-mix(in srgb, var(--text) 62%, var(--bg)); }
   }
-  html{background:var(--bg);}
+"""
+
+# What the three plain pages add to the palettes: the page background carried
+# onto html, so a centred body sits on its own colour rather than on the
+# viewport's. The measure and the prose caps are set on body in each page.
+PAGE_CSS = """  html{background:var(--bg);}
 """
 
 # The key management page, framed by the API tab in the shell. Served from
@@ -338,6 +358,9 @@ KEYS_HTML = """<!doctype html>
   .ep .ep-tpl textarea{width:100%;font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
     padding:6px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--text);}
   .ep .ep-hint{margin:0;font-size:12px;}
+  .ep .ep-last{grid-column:1 / -1;margin:0;font-size:12px;}
+  .ep .ep-last.bad{color:var(--bad);}
+  .ep .ep-last.good{color:var(--good);}
   .days{display:flex;gap:6px;flex-wrap:wrap;}
   .days label{display:inline-flex;gap:4px;align-items:center;font-size:12px;margin:0;}
   input[type=time],input[type=number]{padding:6px 8px;border-radius:4px;border:1px solid var(--border);
@@ -640,6 +663,9 @@ SETTINGS_HTML = """<!doctype html>
   .ep .ep-tpl textarea{width:100%;font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
     padding:6px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--text);}
   .ep .ep-hint{margin:0;font-size:12px;}
+  .ep .ep-last{grid-column:1 / -1;margin:0;font-size:12px;}
+  .ep .ep-last.bad{color:var(--bad);}
+  .ep .ep-last.good{color:var(--good);}
   .days{display:flex;gap:6px;flex-wrap:wrap;}
   .days label{display:inline-flex;gap:4px;align-items:center;font-size:12px;margin:0;}
   input[type=time],input[type=number]{padding:6px 8px;border-radius:4px;border:1px solid var(--border);
@@ -747,7 +773,18 @@ function epRow(e, i){
     '<label class="f ep-tpl"' + ((e.kind||'ntfy') === 'custom' ? '' : ' hidden') + '>Body template, JSON. Placeholders: ' +
       '{title} {message} {event} {container} {build} {state} {time} {priority}' +
       '<textarea class="ep-template" rows="3" spellcheck="false">' + esc(e.template || '{"title": "{title}", "text": "{message}"}') + '</textarea></label>' +
-    '<p class="dim ep-hint"></p></div>';
+    '<p class="dim ep-hint"></p>' + lastDelivery(e) + '</div>';
+}
+// The last delivery, so an endpoint that stopped working says so here rather
+// than only in the container log.
+function lastDelivery(e){
+  var d = e.last_delivery;
+  if(!d) return '<p class="dim ep-last">Nothing sent yet.</p>';
+  var when = '';
+  try { when = new Date(d.at*1000).toLocaleString(); } catch(err){}
+  return '<p class="ep-last ' + (d.ok ? 'good' : 'bad') + '">' +
+         (d.ok ? 'Delivered' : 'Failed') + ' \u2014 ' + esc(d.event) + ', ' + esc(when) +
+         (d.detail ? ' (' + esc(d.detail) + ')' : '') + '</p>';
 }
 var KIND_HINT = {
   pushbullet: 'Auth: Bearer with your Pushbullet access token. Sent as a note with the event as its title.',
@@ -1698,6 +1735,17 @@ def api_v1_payload(d):
         # only: the client does not break its byte total down the same way, so a
         # per-category size would have to be invented rather than reported.
         "composition": d.get("composition"),
+        # Per drive, from the same two files the totals come from.
+        "per_volume": d.get("per_volume"),
+        # Average size of what is left against what has gone. A remainder made of
+        # large files takes far longer than its file count suggests.
+        "remaining_shape": d.get("remaining_shape"),
+        # What bounds the rate: Wine answers the ideal-send-backlog query with a
+        # fixed 64 KB, so a connection carries at most that much in flight and is
+        # bounded by it divided by the round trip. Reported, not turned into
+        # advice: observed has been seen above modelled on live containers.
+        "rate_limits": bbdata.rate_limits(int(d.get("rate", 0) * 1048576),
+                                          d.get("threads"), d.get("latency_ms")),
         # The date this backup began, YYYYMMDD, which is exactly the resolution
         # the client records it at. Not an epoch, because turning a calendar day
         # into a timestamp would have to pick a time of day that was never known.
@@ -2180,6 +2228,32 @@ INDEX_HTML = """<!doctype html>
 </main>
 <div id="footer"><span id="footer-live">live, refreshing every 2s</span><span id="footer-server"></span><span id="build"></span></div>
 <script>
+// What bounds the rate. Wine answers the ideal-send-backlog query with a fixed
+// 64 KB, so a connection carries at most that in flight and is limited by it
+// divided by the round trip. Stated as a measurement, not as advice: on a live
+// container the observed rate has been seen above what this predicts, so it is
+// a floor of unknown tightness.
+function rateTitle(d){
+  var t = Math.round(d.rate_mb * 1048576).toLocaleString() + ' bytes per second';
+  var l = d.rate_limits;
+  if(!l) return t;
+  var mbit = function(b){ return (b * 8 / 1e6).toFixed(1) + ' Mbit/s'; };
+  t += '. Each upload connection can hold 64 KB in flight, so at this round trip one carries about ' +
+       mbit(l.per_thread) + '; ' + d.threads + ' of them models ' + mbit(l.modelled) + '.';
+  if(l.verdict === 'above') t += ' You are running above that, so more is in flight than the 64 KB figure implies.';
+  else if(l.verdict === 'at') t += ' You are at that limit: more threads would raise it, a faster line would not.';
+  else t += ' You are below it, so the limit is elsewhere: the line, the disk, or the size of the files in hand.';
+  return t;
+}
+// Only when there is more than one drive. On a single-share container these
+// bars would repeat the overall one exactly.
+function perVolumeHtml(vols){
+  if(!vols || vols.length < 2) return '';
+  return vols.map(function(v){
+    return gaugeHtml(v.path, {used_str: v.used_str, total_str: v.total_str, pct: v.pct}, true,
+                     v.remaining_files != null ? v.remaining_files.toLocaleString() + ' files left' : '', '');
+  }).join('');
+}
 function pctClass(pct, invert){
   // invert=true: higher is worse (mem/swap gauges). invert=false: higher is better (rate).
   if(invert) return pct>=90?'bad':(pct>=70?'warn':'');
@@ -2549,7 +2623,7 @@ async function tick(){
     var grid = document.getElementById('status-grid');
     grid.innerHTML =
       '<span class="stat">Threads: '+d.threads+'</span>' +
-      '<span class="stat" title="'+Math.round(d.rate_mb*1048576).toLocaleString()+' bytes per second">Up: <span class="'+rateCls+'">'+d.rate_str+'</span> ('+d.rate_mbit_str+')'+sparklineSvg(rateHistory,70,16)+'</span>' +
+      '<span class="stat" title="'+esc(rateTitle(d))+'">Up: <span class="'+rateCls+'">'+d.rate_str+'</span> ('+d.rate_mbit_str+')'+sparklineSvg(rateHistory,70,16)+'</span>' +
       '<span class="stat">Chunks/60s: '+d.chunks+'</span>' +
       '<span class="stat">Session: '+d.session_str+'</span>' +
       stateHtml(d) +
@@ -2577,7 +2651,9 @@ async function tick(){
                 d.memory_by_process && d.memory_by_process.length
                   ? 'Largest: ' + esc(d.memory_by_process[0].name) : '') +
       gaugeHtml('Swap', d.swap, false) +
-      '<span class="stat">Files Remaining: '+(d.backup && d.backup.remaining_files!=null ? d.backup.remaining_files.toLocaleString() : 'n/a')+'</span>' +
+      '<span class="stat"'+(d.remaining_shape ? ' title="What is left averages '+esc(d.remaining_shape.avg_remaining_str)+' a file, against '+esc(d.remaining_shape.avg_done_str)+' for what has already gone. A remainder made of large files takes far longer than its count suggests."' : '')+'>Files Remaining: '+
+        (d.backup && d.backup.remaining_files!=null ? d.backup.remaining_files.toLocaleString() : 'n/a') +
+        (d.remaining_shape ? ' <span class="dim">(avg '+esc(d.remaining_shape.avg_remaining_str)+')</span>' : '')+'</span>' +
       // What is left, then what the whole thing is made of, then how long it has
       // been running: the three sit together because they answer one question.
       compositionHtml(d.composition) +
@@ -2585,10 +2661,15 @@ async function tick(){
                 'began, from the date the client recorded at install.">Backing up since: ' +
                 esc(fmtDay(d.backing_up_since)) + '</span>' : '') +
       gaugeHtml('Backup', d.backup, true,
-                d.backup ? (d.backup.files + ' \u2022 ETA based on last ' + d.backup.eta_samples + ' completed transfer' + (d.backup.eta_samples===1?'':'s')) : '',
+                // The client rewrites this figure as it goes, so it is live, but
+                // it counts the whole backup and this session's share of it is
+                // the part that moves while you watch.
+                d.backup ? (d.backup.files + ' \u2022 ETA based on last ' + d.backup.eta_samples + ' completed transfer' + (d.backup.eta_samples===1?'':'s') +
+                            (d.session_str ? ' \u2022 ' + d.session_str + ' this session' : '')) : '',
                 d.backup ? ('ETA '+esc(d.backup.eta) +
                             (d.backup.eta_date ? ' \u2022 '+esc(d.backup.eta_date) : '') +
-                            etaTrendHtml(d.eta_trend)) : '');
+                            etaTrendHtml(d.eta_trend)) : '') +
+      perVolumeHtml(d.per_volume);
 
     var up = document.getElementById('uploading');
     document.getElementById('uploading-title').textContent = d.files.length

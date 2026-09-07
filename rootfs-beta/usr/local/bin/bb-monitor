@@ -225,13 +225,15 @@ def draw(scr,d,st):
             cx=x
             for s,a in parts: aw(scr,y,cx,s,a); cx+=len(s)
         return {"w":wd,"draw":dr}
-    def gauge(label,us,ts_,pct,high_is_good=False,note="",note2=""):
+    def gauge(label,us,ts_,pct,high_is_good=False,note="",note2="",dp=0):
         # Mem and Swap are bad when full; Backup is good when full. Same widget,
         # opposite reading, so the direction has to be told rather than assumed.
         # note2 is drawn in NORM after the severity-coloured suffix, for text
         # that is not itself a reading of the gauge (e.g. an ETA calendar date)
         # and so should not borrow the good/warn/bad colouring of the percentage.
-        pre="%s %s/%s "%(label,us,ts_); suf=" %d%%"%int(pct)+(" %s"%note if note else "")
+        # dp: Backup asks for two places. A whole percent of a large backup is
+        # days of uploading, so an integer reading sits still for days.
+        pre="%s %s/%s "%(label,us,ts_); suf=" %.*f%%"%(dp,pct)+(" %s"%note if note else "")
         if high_is_good: sev=0 if pct>=67 else (1 if pct>=34 else 2)
         else:            sev=2 if pct>=90 else (1 if pct>=70 else 0)
         def dr(y,x):
@@ -267,7 +269,13 @@ def draw(scr,d,st):
     if b:
         fr=b.get("remaining_files")
         if fr is not None:
-            chunks.append(txt([("Files Remaining: ",NORM),("{:,}".format(fr),NORM)]))
+            # The size of what is left, beside its count. A remainder made of
+            # large files takes far longer than the count suggests: on a live
+            # container what remained averaged 602 MB against 8 MB for what had
+            # already gone, which is why 96% of the files was 23% of the bytes.
+            rs=d.get("remaining_shape")
+            chunks.append(txt([("Files Remaining: ",NORM),("{:,}".format(fr),NORM)]
+                              +([(" (avg %s)"%human(rs["avg_remaining"]),NORM)] if rs else [])))
         eta_secs=b.get("eta_seconds"); ed=eta_date(eta_secs)
         # eta_trend compares today's moving-average estimate with yesterday's. A
         # smaller ETA (direction "improving") reads as "better", a larger one
@@ -278,9 +286,17 @@ def draw(scr,d,st):
             tsecs=abs(trend["delta_seconds"])
             mag=("%dh"%round(tsecs/3600)) if tsecs<86400 else ("%dd"%round(tsecs/86400))
             trend_txt=", %s %s"%(mag,"better" if trend["direction"]=="improving" else "slower")
-        chunks.append(gauge("Backup:",human(b["done"]),human(b["total"]),b["pct"],
+        chunks.append(gauge("Backup:",human(b["done"],2),human(b["total"],2),b["pct"],dp=2,
                              high_is_good=True,note="ETA "+eta_str(eta_secs),
                              note2=(" (%s%s)"%(ed,trend_txt) if ed else "")))
+    # Per drive, and only with more than one: on a single-share container these
+    # repeat the overall bar exactly.
+    pv=d.get("per_volume") or []
+    if len(pv)>1:
+        for v in pv:
+            chunks.append(gauge(v["path"]+":",human(v["done"],2),human(v["total"],2),v["pct"],
+                                 dp=2,high_is_good=True,
+                                 note=("{:,} left".format(v["remaining_files"]) if v.get("remaining_files") is not None else "")))
     chunks.append(txt([("Uptime: ",NORM),(uptime_str(),NORM)]))
     # The web dashboard has this in its footer, which has the width for it. Here
     # the footer already carries the key hints and the build label, and a 29
